@@ -319,6 +319,7 @@
     "receipts",
     "documents",
     "settings",
-    "subcontracts"
+    "subcontracts",
+    "quoteItems"
   ]
 }

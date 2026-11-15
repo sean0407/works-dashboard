@@ -35,5 +35,5 @@ export function normalizeMaintenance(input:Dataset):Dataset{
    reconciliation.push({id:`review:${text(c.id)}:${index+1}`,caseId:c.warningCaseId,sourceId:parsed[3]??c.warningSourceId,type:parsed[1]??'待核對',description:parsed[2],status:'待核對',resolution:null});
   });
  }
- return {...input,invoices,receipts,invoiceSchedule,allocations,reconciliation,quoteItems:[],tasks:[]};
+ return {...input,invoices,receipts,invoiceSchedule,allocations,reconciliation,quoteItems:input.quoteItems??[],tasks:[]};
 }
