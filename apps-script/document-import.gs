@@ -494,18 +494,21 @@ function sendDailyDigest() {
 }
 
 
-/** 檢查用：讀最新一份報價單 PDF 並把讀到的欄位寫進執行記錄，不會改動試算表。 */
+/** 檢查用：讀最新一份報價單與發票 PDF，把讀到的欄位寫進執行記錄，不會改動試算表。 */
 function debugExtract() {
   var values = SpreadsheetApp.getActive().getSheetByName(DOC_SHEET).getDataRange().getValues(), col = columnIndex(values[0]);
-  for (var r = values.length - 1; r >= 1; r--) {
-    var fileId = driveFileIdFromUrl(values[r][col.url]);
-    if (String(values[r][col.kind]).trim() !== '報價單' || !fileId) continue;
-    var name = String(values[r][col.filename] || ''), text = pdfText_(fileId);
-    console.log('debugExtract: 第 ' + (r + 1) + ' 列，文字長度 ' + text.length + '，欄位 ' + JSON.stringify(extractQuote(text, name)));
-    console.log('debugExtract 文字: ' + normalizeText(text).slice(0, 900));
-    return;
-  }
-  console.log('debugExtract: 找不到有連結的報價單');
+  ['報價單', '發票'].forEach(function (kind) {
+    for (var r = values.length - 1; r >= 1; r--) {
+      var fileId = driveFileIdFromUrl(values[r][col.url]);
+      if (String(values[r][col.kind]).trim() !== kind || !fileId) continue;
+      var name = String(values[r][col.filename] || ''), text = pdfText_(fileId);
+      var fields = kind === '報價單' ? extractQuote(text, name) : extractInvoice(text, name);
+      console.log('debugExtract ' + kind + ': 第 ' + (r + 1) + ' 列，文字長度 ' + text.length + '，欄位 ' + JSON.stringify(fields));
+      console.log('debugExtract ' + kind + ' 文字: ' + normalizeText(text).slice(0, 600));
+      return;
+    }
+    console.log('debugExtract: 找不到有連結的' + kind);
+  });
 }
 
 /** 檢查用：把今天的摘要內容寫進執行記錄，不寄信、不改動試算表。 */
