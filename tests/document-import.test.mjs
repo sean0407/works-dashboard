@@ -7,7 +7,7 @@ import schema from '../lib/domain/schema.json' with {type:'json'};
 // Load the Apps Script file as-is; only its pure functions are exercised here.
 const ctx=vm.createContext({});
 vm.runInContext(readFileSync(new URL('../apps-script/document-import.gs',import.meta.url),'utf8'),ctx);
-const {guessKind,guessCaseNumber,docIdFor,driveFileIdFromUrl,planChanges,folderIdFrom,HEADERS}=ctx;
+const {guessKind,guessCaseNumber,docIdFor,driveFileIdFromUrl,planChanges,folderIdFrom,foldersFromSettings,HEADERS}=ctx;
 
 const headers=Object.values(schema.collections.documents.columns);
 const blank=()=>headers.map(()=>'');
@@ -78,4 +78,19 @@ test('headers are matched by name, so reordered columns still line up',()=>{
  assert.equal(row[reordered.indexOf('文件類型')],'發票');
  assert.equal(row[reordered.indexOf('文件ID')],'doc_fileDDDDDDDDDD');
  assert.throws(()=>planChanges(headers.filter(h=>h!=='文件連結'),[],[]),/文件連結/);
+});
+
+test('quote and invoice folders fix the document kind regardless of file name',()=>{
+ const plan=planChanges(headers,[],[{...file('fileEEEEEEEEEE','scan_0012.pdf','2025'),kind:'發票'},{...file('fileFFFFFFFFFF','A283 2026 活動.pdf','2026'),kind:'報價單'}]);
+ assert.equal(at(plan.append[0],'文件類型'),'發票');
+ assert.equal(at(plan.append[1],'文件類型'),'報價單');
+ assert.equal(at(plan.append[1],'原案號'),'A283');
+});
+
+test('folders are read from the 設定 sheet with their kinds',()=>{
+ const values=[['設定項目','設定值','說明'],['timezone','Asia/Taipei',''],
+  ['quotes_folder_id','https://drive.google.com/drive/u/0/folders/1NLSl-o7ga47UaI8d86zdleJ8RUAtDVoD',''],
+  ['invoices_folder_id','https://drive.google.com/drive/u/0/folders/1e3FxLVymjCwRgFJo7DH4VNgbq1o70Zep','']];
+ assert.deepEqual(JSON.parse(JSON.stringify(foldersFromSettings(values))),[{id:'1NLSl-o7ga47UaI8d86zdleJ8RUAtDVoD',kind:'報價單'},{id:'1e3FxLVymjCwRgFJo7DH4VNgbq1o70Zep',kind:'發票'}]);
+ assert.equal(foldersFromSettings([['設定項目','設定值']]).length,0);
 });

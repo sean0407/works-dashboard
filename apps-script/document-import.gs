@@ -10,7 +10,12 @@
 
 var DOC_SHEET = '文件';
 var SETTINGS_SHEET = '設定';
-var FOLDER_KEY = 'documents_folder_id';
+// 「設定」分頁的資料夾設定：報價單、發票各一個資料夾，類型直接依資料夾決定；documents_folder_id 為其他文件（類型依檔名推測）。
+var FOLDER_KEYS = [
+  { key: 'quotes_folder_id', kind: '報價單' },
+  { key: 'invoices_folder_id', kind: '發票' },
+  { key: 'documents_folder_id', kind: '' }
+];
 var HEADERS = {
   id: '文件ID', kind: '文件類型', filename: '原始檔名', url: '文件連結', sha256: 'SHA256',
   caseNumber: '原案號', reviewNotes: '待核對事項', reviewStatus: '核對狀態'
@@ -61,9 +66,14 @@ function columnIndex(headers) {
   return index;
 }
 
+/** The folder's fixed kind wins; otherwise guess from the names. */
+function kindFor(file, name) {
+  return file.kind || guessKind(name, file.folder);
+}
+
 /**
  * Decide what to write. Never removes or overwrites a filled cell.
- * headers: row 1; rows: existing data rows (row 2 onward); files: [{id, name, url, folder, sha256?}].
+ * headers: row 1; rows: existing data rows (row 2 onward); files: [{id, name, url, folder, kind?, sha256?}].
  * hash(file) returns the SHA256 hex for files that will be written (defaults to file.sha256).
  * Returns {append: [rowValues], update: [{row: sheetRowNumber, values: rowValues}], skipped: n}.
  */
@@ -94,14 +104,14 @@ function planChanges(headers, rows, files, hash) {
       values[col.url] = file.url;
       if (!String(values[col.sha256] || '').trim()) values[col.sha256] = hash(file);
       if (!String(values[col.id] || '').trim()) values[col.id] = docIdFor(file.id);
-      if (!String(values[col.kind] || '').trim()) values[col.kind] = guessKind(name, file.folder);
+      if (!String(values[col.kind] || '').trim()) values[col.kind] = kindFor(file, name);
       if (!String(values[col.caseNumber] || '').trim()) values[col.caseNumber] = guessCaseNumber(name, file.folder);
       result.update.push({ row: i + 2, values: values });
       return;
     }
     var row = headers.map(function () { return ''; });
     row[col.id] = docIdFor(file.id);
-    row[col.kind] = guessKind(name, file.folder);
+    row[col.kind] = kindFor(file, name);
     row[col.filename] = name;
     row[col.url] = file.url;
     row[col.sha256] = hash(file);
@@ -140,14 +150,14 @@ function importDocuments() {
   if (!lock.tryLock(30000)) return;
   try {
     var ss = SpreadsheetApp.getActive();
-    var folderId = readFolderId_(ss);
+    var folders = readFolders_(ss);
     var sheet = ss.getSheetByName(DOC_SHEET);
     if (!sheet) throw new Error('找不到「' + DOC_SHEET + '」分頁。');
     var data = sheet.getDataRange().getValues();
     var headers = data[0];
     var rows = data.slice(1);
     var files = [];
-    collectFiles_(DriveApp.getFolderById(folderId), '', files, 0);
+    folders.forEach(function (f) { collectFiles_(DriveApp.getFolderById(f.id), '', files, 0, f.kind); });
     var plan = planChanges(headers, rows, files, function (f) { return sha256Hex_(f.blob()); });
     plan.update.forEach(function (u) { sheet.getRange(u.row, 1, 1, headers.length).setValues([u.values.slice(0, headers.length)]); });
     if (plan.append.length) sheet.getRange(sheet.getLastRow() + 1, 1, plan.append.length, headers.length).setValues(plan.append);
@@ -157,35 +167,43 @@ function importDocuments() {
   }
 }
 
-function readFolderId_(ss) {
-  var sheet = ss.getSheetByName(SETTINGS_SHEET);
-  if (!sheet) throw new Error('找不到「' + SETTINGS_SHEET + '」分頁。');
-  var values = sheet.getDataRange().getValues();
-  var keyCol = values[0].map(function (h) { return String(h).trim(); }).indexOf('設定項目');
-  var valueCol = values[0].map(function (h) { return String(h).trim(); }).indexOf('設定值');
-  for (var i = 1; i < values.length; i++) {
-    if (String(values[i][keyCol]).trim() === FOLDER_KEY) {
+/** Pure: [{id, kind}] from the 設定 sheet values (header row first). */
+function foldersFromSettings(values) {
+  var head = values[0].map(function (h) { return String(h).trim(); });
+  var keyCol = head.indexOf('設定項目'), valueCol = head.indexOf('設定值');
+  var out = [];
+  FOLDER_KEYS.forEach(function (spec) {
+    for (var i = 1; i < values.length; i++) {
+      if (String(values[i][keyCol]).trim() !== spec.key) continue;
       var id = folderIdFrom(values[i][valueCol]);
-      if (id) return id;
+      if (id) out.push({ id: id, kind: spec.kind });
     }
-  }
-  throw new Error('請在「設定」分頁新增一列：設定項目填 ' + FOLDER_KEY + '，設定值填雲端資料夾網址。');
+  });
+  return out;
 }
 
-function collectFiles_(folder, folderName, out, depth) {
+function readFolders_(ss) {
+  var sheet = ss.getSheetByName(SETTINGS_SHEET);
+  if (!sheet) throw new Error('找不到「' + SETTINGS_SHEET + '」分頁。');
+  var folders = foldersFromSettings(sheet.getDataRange().getValues());
+  if (!folders.length) throw new Error('請在「設定」分頁新增 quotes_folder_id（報價單資料夾）和 invoices_folder_id（發票資料夾），設定值貼資料夾網址。');
+  return folders;
+}
+
+function collectFiles_(folder, folderName, out, depth, kind) {
   var it = folder.getFiles();
   while (it.hasNext()) {
     var f = it.next();
     if (!ACCEPTED_MIME.test(f.getMimeType())) continue;
     (function (file) {
-      out.push({ id: file.getId(), name: file.getName(), url: file.getUrl(), folder: folderName, blob: function () { return file.getBlob(); } });
+      out.push({ id: file.getId(), name: file.getName(), url: file.getUrl(), folder: folderName, kind: kind, blob: function () { return file.getBlob(); } });
     })(f);
   }
   if (depth >= MAX_DEPTH) return;
   var sub = folder.getFolders();
   while (sub.hasNext()) {
     var child = sub.next();
-    collectFiles_(child, child.getName(), out, depth + 1);
+    collectFiles_(child, child.getName(), out, depth + 1, kind);
   }
 }
 
