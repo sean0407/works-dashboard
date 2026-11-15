@@ -449,10 +449,17 @@ function extractRecords_(ss) {
 
 /** PDF → text through Drive's OCR conversion; the temporary Google Doc is trashed right away. */
 function pdfText_(fileId) {
-  var file = DriveApp.getFileById(fileId), blob = file.getBlob(), temp;
-  // Drive v2: the resource keeps the source type; `ocr: true` is what turns the upload into a Google Doc.
-  if (Drive.Files.insert) temp = Drive.Files.insert({ title: 'tmp-ocr-' + fileId, mimeType: blob.getContentType() }, blob, { ocr: true, ocrLanguage: 'zh-TW' });
-  else temp = Drive.Files.create({ name: 'tmp-ocr-' + fileId, mimeType: 'application/vnd.google-apps.document' }, blob, { ocrLanguage: 'zh-TW' });
+  var temp, name = 'tmp-ocr-' + fileId;
+  if (Drive.Files.insert) {
+    // Drive v2. Copy-and-convert first; if Google throttles that, upload the bytes with OCR instead.
+    try { temp = Drive.Files.copy({ title: name }, fileId, { convert: true, ocr: true, ocrLanguage: 'zh-TW' }); }
+    catch (e) {
+      var blob = DriveApp.getFileById(fileId).getBlob();
+      temp = Drive.Files.insert({ title: name, mimeType: blob.getContentType() }, blob, { ocr: true, ocrLanguage: 'zh-TW' });
+    }
+  } else {
+    temp = Drive.Files.copy({ name: name, mimeType: 'application/vnd.google-apps.document' }, fileId, { ocrLanguage: 'zh-TW' });
+  }
   try { return DocumentApp.openById(temp.id).getBody().getText(); }
   finally { DriveApp.getFileById(temp.id).setTrashed(true); }
 }
