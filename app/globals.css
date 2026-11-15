@@ -211,3 +211,4 @@ td small{font-size:var(--fs-meta);color:var(--text-3)}
 .review-groups button.active b{color:#fff}
 @media(max-width:760px){.context-cards.two{grid-template-columns:minmax(0,1fr)}.dt-toolbar,.review-groups{padding-left:14px;padding-right:14px}}
 .dt-table .stepper.compact{flex-wrap:nowrap}
+.context-cards .small-strong{font-size:20px}

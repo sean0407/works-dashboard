@@ -200,6 +200,26 @@
         "value": "設定值",
         "notes": "說明"
       }
+    },
+    "subcontracts": {
+      "sheet": "發包項目",
+      "columns": {
+        "id": "發包ID",
+        "caseId": "案件ID",
+        "caseNumber": "原案號",
+        "vendor": "發包廠商",
+        "vendorTaxId": "廠商統編",
+        "kind": "文件類型",
+        "documentNumber": "文件號碼",
+        "date": "日期",
+        "items": "發包項目",
+        "net": "未稅金額",
+        "tax": "稅額",
+        "gross": "含稅金額",
+        "status": "狀態",
+        "sourceUrl": "原件連結",
+        "notes": "備註"
+      }
     }
   },
   "enums": {
@@ -240,6 +260,12 @@
     "boolean": [
       "是",
       "否"
+    ],
+    "subcontractStatus": [
+      "有效",
+      "參考",
+      "重複",
+      "作廢"
     ]
   },
   "dates": [
@@ -291,6 +317,7 @@
     "invoices",
     "receipts",
     "documents",
-    "settings"
+    "settings",
+    "subcontracts"
   ]
 }
