@@ -305,3 +305,6 @@ td small{font-size:var(--fs-meta);color:var(--text-3)}
 @media(max-width:760px){.follow-strip{flex-wrap:wrap;padding:12px 14px}.follow-strip p{flex-basis:calc(100% - 32px)}.follow-strip .text-link{margin-left:29px}}
 .legend-prev{font-style:normal;margin-left:14px;display:inline-flex;align-items:center;gap:6px}
 .legend-prev::before{content:"";width:18px;border-top:2px dashed #a9b5ae}
+.nav-group{display:block;font-size:11px;letter-spacing:1.5px;color:#7f998a;padding:14px 14px 4px}
+.nav-group:first-child{padding-top:0}
+.sidebar nav .nav-item{padding-top:10px;padding-bottom:10px;margin:2px 0}
