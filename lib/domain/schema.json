@@ -1,0 +1,296 @@
+{
+  "version": 1,
+  "collections": {
+    "clients": {
+      "sheet": "客戶",
+      "columns": {
+        "id": "客戶ID",
+        "name": "付款公司",
+        "taxId": "統編",
+        "paymentDays": "預設付款天數",
+        "contact": "聯絡窗口",
+        "notes": "備註"
+      }
+    },
+    "cases": {
+      "sheet": "案件商機",
+      "columns": {
+        "id": "案件ID",
+        "number": "原案號",
+        "title": "案名",
+        "clientId": "客戶ID",
+        "brand": "活動品牌",
+        "mode": "歷史或新案",
+        "status": "商機狀態",
+        "executionStatus": "執行狀態",
+        "closureStatus": "結案狀態",
+        "decisionDate": "成交決策日",
+        "activityStart": "活動開始日",
+        "activityEnd": "活動結束日",
+        "signedSourceId": "簽回文件ID",
+        "wonNet": "正式成交未稅",
+        "wonGross": "正式成交含稅",
+        "expectedInvoiceGross": "應開票含稅總額",
+        "receiptVerified": "收款資料已核對",
+        "parentId": "原案ID",
+        "confirmed": "案件關聯已確認",
+        "expectedDecisionDate": "預計決定日",
+        "lastContactDate": "最後聯繫日",
+        "nextFollowupDate": "下次追案日",
+        "nextAction": "下一步",
+        "lossReason": "失單原因",
+        "directCost": "實際直接成本",
+        "costComplete": "成本已齊",
+        "notes": "備註",
+        "revisionSignedDate": "最新改版簽回日",
+        "revisionSignedSourceId": "最新改版簽回文件ID",
+        "reviewNotes": "待核對事項",
+        "reviewStatus": "核對狀態"
+      }
+    },
+    "quotes": {
+      "sheet": "報價版本",
+      "columns": {
+        "id": "報價ID",
+        "caseId": "案件ID",
+        "date": "報價日",
+        "title": "報價名稱",
+        "version": "版本",
+        "role": "原案互補追加",
+        "groupId": "報價組ID",
+        "effective": "有效成交版本",
+        "net": "未稅金額",
+        "tax": "稅額",
+        "gross": "含稅金額",
+        "specialGross": "專案優惠含稅",
+        "feeRate": "服務費率",
+        "sourceId": "來源文件ID",
+        "company": "開立公司快照",
+        "terms": "條款快照",
+        "notes": "備註",
+        "taxRate": "報價稅率",
+        "discountNet": "未稅折扣"
+      }
+    },
+    "quoteItems": {
+      "sheet": "報價明細備份",
+      "columns": {
+        "id": "明細ID",
+        "quoteId": "報價ID",
+        "category": "分類",
+        "description": "品項",
+        "spec": "規格",
+        "unitPrice": "單價",
+        "quantity": "數量",
+        "unit": "單位",
+        "amount": "明細金額",
+        "notes": "備註"
+      }
+    },
+    "invoiceSchedule": {
+      "sheet": "開票安排",
+      "columns": {
+        "id": "安排ID",
+        "caseId": "案件ID",
+        "label": "訂金尾款追加",
+        "expectedGross": "應開含稅",
+        "dueDate": "應開票日",
+        "invoiceId": "對應發票ID",
+        "confirmed": "安排已確認",
+        "notes": "備註"
+      }
+    },
+    "invoices": {
+      "sheet": "發票",
+      "columns": {
+        "id": "發票ID",
+        "number": "發票號碼",
+        "caseId": "案件ID",
+        "date": "開票日",
+        "clientId": "客戶ID",
+        "net": "銷售額",
+        "tax": "稅額",
+        "gross": "含稅總額",
+        "taxConfirmed": "稅額已確認",
+        "type": "全款訂金尾款追加",
+        "status": "發票狀態",
+        "dueDate": "收款到期日",
+        "dueConfirmed": "到期日已確認",
+        "receiptVerified": "收款資料已核對",
+        "sourceId": "來源文件ID",
+        "notes": "備註",
+        "scheduleId": "安排ID",
+        "expectedGross": "應開含稅",
+        "plannedDate": "應開票日",
+        "scheduleConfirmed": "安排已確認"
+      }
+    },
+    "receipts": {
+      "sheet": "收款",
+      "columns": {
+        "id": "收款ID",
+        "date": "入帳日",
+        "clientId": "客戶ID",
+        "amount": "實收含稅",
+        "reference": "銀行或憑證",
+        "verified": "收款已確認",
+        "sourceId": "來源文件ID",
+        "notes": "備註",
+        "recordType": "紀錄類型",
+        "allocationId": "分配ID",
+        "invoiceId": "對應發票",
+        "caseId": "案件ID",
+        "allocatedAmount": "分配含稅",
+        "allocationNotes": "分配備註"
+      }
+    },
+    "allocations": {
+      "sheet": "收款分配",
+      "columns": {
+        "id": "分配ID",
+        "receiptId": "收款ID",
+        "invoiceId": "發票ID",
+        "caseId": "案件ID",
+        "amount": "分配含稅",
+        "notes": "備註"
+      }
+    },
+    "tasks": {
+      "sheet": "追案待辦",
+      "columns": {
+        "id": "待辦ID",
+        "caseId": "案件ID",
+        "title": "待辦內容",
+        "dueDate": "到期日",
+        "status": "待辦狀態",
+        "completedDate": "完成日",
+        "notes": "備註"
+      }
+    },
+    "documents": {
+      "sheet": "文件",
+      "columns": {
+        "id": "文件ID",
+        "kind": "文件類型",
+        "filename": "原始檔名",
+        "url": "文件連結",
+        "sha256": "SHA256",
+        "caseNumber": "原案號",
+        "notes": "備註",
+        "reviewNotes": "待核對事項",
+        "reviewStatus": "核對狀態"
+      }
+    },
+    "reconciliation": {
+      "sheet": "待核對",
+      "columns": {
+        "id": "核對ID",
+        "caseId": "案件ID",
+        "sourceId": "文件ID",
+        "type": "問題類型",
+        "description": "需核對內容",
+        "status": "核對狀態",
+        "resolution": "處理結果"
+      }
+    },
+    "settings": {
+      "sheet": "設定",
+      "columns": {
+        "key": "設定項目",
+        "value": "設定值",
+        "notes": "說明"
+      }
+    }
+  },
+  "enums": {
+    "mode": [
+      "歷史",
+      "新案"
+    ],
+    "status": [
+      "需求接洽",
+      "準備報價",
+      "已報價待確認",
+      "已成交",
+      "未成交",
+      "取消",
+      "待核對"
+    ],
+    "executionStatus": [
+      "籌備中",
+      "執行中",
+      "執行完成",
+      "待核對"
+    ],
+    "closureStatus": [
+      "未結案",
+      "已結案",
+      "待核對"
+    ],
+    "invoiceStatus": [
+      "有效",
+      "作廢"
+    ],
+    "taskStatus": [
+      "待辦",
+      "進行中",
+      "完成",
+      "取消"
+    ],
+    "boolean": [
+      "是",
+      "否"
+    ]
+  },
+  "dates": [
+    "decisionDate",
+    "activityStart",
+    "activityEnd",
+    "expectedDecisionDate",
+    "lastContactDate",
+    "nextFollowupDate",
+    "revisionSignedDate",
+    "date",
+    "dueDate",
+    "completedDate",
+    "plannedDate"
+  ],
+  "numbers": [
+    "paymentDays",
+    "wonNet",
+    "wonGross",
+    "expectedInvoiceGross",
+    "directCost",
+    "net",
+    "tax",
+    "gross",
+    "specialGross",
+    "feeRate",
+    "taxRate",
+    "discountNet",
+    "unitPrice",
+    "quantity",
+    "amount",
+    "expectedGross",
+    "allocatedAmount"
+  ],
+  "booleans": [
+    "receiptVerified",
+    "confirmed",
+    "costComplete",
+    "effective",
+    "taxConfirmed",
+    "dueConfirmed",
+    "verified",
+    "scheduleConfirmed"
+  ],
+  "sourceCollections": [
+    "clients",
+    "cases",
+    "quotes",
+    "invoices",
+    "receipts",
+    "documents",
+    "settings"
+  ]
+}

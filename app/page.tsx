@@ -1,0 +1,7 @@
+import Dashboard from '@/components/dashboard';
+import {getChatGPTUser,chatGPTSignInPath} from './chatgpt-auth';
+export const dynamic='force-dynamic';
+export default async function Home(){
+ const user=await getChatGPTUser();
+ return <Dashboard signedIn={!!user} signInPath={chatGPTSignInPath('/')} />;
+}
