@@ -491,3 +491,12 @@ function debugExtract() {
   }
   console.log('debugExtract: 找不到有連結的報價單');
 }
+
+/** 檢查用：把今天的摘要內容寫進執行記錄，不寄信、不改動試算表。 */
+function debugDigest() {
+  var ss = SpreadsheetApp.getActive();
+  var today = Utilities.formatDate(new Date(), 'Asia/Taipei', 'yyyy-MM-dd');
+  var digest = buildDigest(ss.getSheetByName(CASE_SHEET).getDataRange().getValues(), ss.getSheetByName(INVOICE_SHEET).getDataRange().getValues(), today);
+  console.log('debugDigest ' + today + ': 該追 ' + digest.followups.length + '、活動 ' + digest.activities.length + '、逾期 ' + digest.overdue.length + ' 張，合計 ' + Math.round(digest.overdueTotal));
+  console.log(digestBody(digest, today) || '（三項都沒有，今天不會寄信）');
+}
