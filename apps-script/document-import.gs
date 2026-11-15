@@ -197,6 +197,14 @@ function extractInvoice(text, filename) {
   var net = amountFrom(/銷售額合計\s*([\d,]+)/.exec(t));
   var gross = amountFrom(/總計\s*([\d,]+)/.exec(t));
   var caseNumber = /(?:^|[^A-Za-z0-9])(A\d{3})(?!\d)/.exec(name);
+  if (net !== null && (gross === null || gross < net || gross - net > net * 0.06)) {
+    // Converted text can separate 總計 from its figure: take the tax and total that add up after 銷售額合計.
+    var after = t.slice(t.indexOf('銷售額合計')), found = (after.match(/\d[\d,]*/g) || []).slice(1, 12).map(function (x) { return Number(x.replace(/,/g, '')); });
+    gross = null;
+    for (var a = 0; a < found.length && gross === null; a++) for (var b = 0; b < found.length; b++) {
+      if (a !== b && found[a] > 0 && found[a] <= net * 0.06 && net + found[a] === found[b]) { gross = found[b]; break; }
+    }
+  }
   var consistent = net !== null && gross !== null && gross >= net && gross - net <= net * 0.06;
   return {
     number: number ? number[1] : '', caseNumber: caseNumber ? caseNumber[1] : '', date: date ? isoDate(date[1], date[2], date[3]) : null,

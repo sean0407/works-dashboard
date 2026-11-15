@@ -59,3 +59,9 @@ test('quote amounts are read when the labels come first and the figures after th
  const bad=extractQuote('合計(未稅,含服務費) 營業稅(5%) 總計(含服務費、營業稅) 100,000 8,000 999 5,400 113,400','x.pdf');
  assert.equal(bad.net,null);assert.equal(bad.gross,null);
 });
+
+test('invoice tax and total are found when the total label is separated from its figure',()=>{
+ const text='電子發票證明聯 2026-08-08 發票號碼:ZZ00000009 格 式:25 統一編號:00000000 活動執行 1 20,000 20,000 銷售額合計 20,000 營業人蓋統一發票專用章 營業稅 應稅 √ 零稅率 免稅 1,000 賣 方:示範公司 21,000統一編號:00000000 地 址:示範路1段66號5樓 總計 總計新台幣(中文大寫) 貳萬壹仟元整';
+ const f=extractInvoice(text,'A903 ZZ00000009 示範(全款發票).pdf');
+ assert.equal(f.net,20000);assert.equal(f.tax,1000);assert.equal(f.gross,21000);assert.equal(f.number,'ZZ00000009');
+});
