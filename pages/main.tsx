@@ -15,7 +15,6 @@ function waitForGoogle(){return new Promise<void>((resolve,reject)=>{const start
 
 function App(){
  const [session,setSession]=useState<{token:string;email:string}|null>(null);
- const [allowed,setAllowed]=useState<string[]|null>(null);
  const [problem,setProblem]=useState<string|null>(config.googleClientId?null:'網站尚未設定 Google OAuth Client ID（pages/config.json）。');
  const client=useRef<any>(null);
  useEffect(()=>{
@@ -33,14 +32,12 @@ function App(){
   }).catch(e=>setProblem(e.message));
  },[]);
  const signIn=useCallback(()=>{if(client.current)client.current.requestAccessToken({prompt:session?'consent':'select_account'});else setProblem(p=>p??'Google 登入元件尚未載入，請稍候再試。');},[session]);
- const signOut=useCallback(()=>{if(session)google.accounts.oauth2.revoke(session.token,()=>{});setSession(null);setAllowed(null);},[session]);
+ const signOut=useCallback(()=>{if(session)google.accounts.oauth2.revoke(session.token,()=>{});setSession(null);},[session]);
  const loadData=useCallback(async()=>{
   if(!session)return{status:'authentication_required',message:'請先登入。'};
-  const result=await loadForAccount(session.token,session.email,sourceTarget);
-  setAllowed(result.allowedEmails??null);
-  return result;
+  return loadForAccount(session.token,sourceTarget);
  },[session]);
- const account=useMemo<DashboardAccount|null>(()=>session?{email:session.email,allowedEmails:allowed,spreadsheetUrl,onSignOut:signOut}:null,[session,allowed,signOut]);
+ const account=useMemo<DashboardAccount|null>(()=>session?{email:session.email,spreadsheetUrl,onSignOut:signOut}:null,[session,signOut]);
  return <>
   <Dashboard notice={config.googleClientId?problem:null} signInDisabledReason={config.googleClientId?null:'Google 登入尚未啟用：網站管理者需先建立 Google OAuth 用戶端 ID，並填入 pages/config.json。'} key={session?.email??'anon'} signedIn={!!session} loadData={session?loadData:undefined} onSignIn={signIn} signInLabel="使用 Google 帳號登入" account={account}/>
  </>;

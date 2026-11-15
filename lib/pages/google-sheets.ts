@@ -1,23 +1,5 @@
 import {METADATA_ACTION,loadWorkbook,type TargetConfig} from '../domain/workbook.ts';
-import {text,type Dataset} from '../domain/analytics.ts';
-
-/** Settings key in the 設定 sheet that lists the Google accounts allowed to view the dashboard. */
-export const ALLOWED_EMAILS_KEY='allowed_emails';
-
-export function allowedEmails(data:Dataset):string[]|null{
- // One row per account or several accounts in one cell are both accepted.
- const rows=(data.settings??[]).filter(r=>text(r.key).trim()===ALLOWED_EMAILS_KEY);
- if(!rows.length)return null;
- return [...new Set(rows.flatMap(row=>text(row.value).split(/[\s,;，；]+/)).map(s=>s.trim().toLowerCase()).filter(Boolean))];
-}
-
-/** Fail closed: a missing or empty list admits nobody. */
-export function checkAllowed(data:Dataset,email:string):{ok:true;list:string[]}|{ok:false;list:string[]|null;message:string}{
- const list=allowedEmails(data);
- if(!list||!list.length)return{ok:false,list,message:`尚未設定可登入帳號。請在 Google Sheet「設定」分頁新增一列：設定項目填 ${ALLOWED_EMAILS_KEY}，設定值填允許的 Google 帳號（多個用逗號分隔）。`};
- if(!list.includes(email.trim().toLowerCase()))return{ok:false,list,message:`帳號 ${email} 不在可登入名單中，請聯絡管理者加入。`};
- return{ok:true,list};
-}
+import {text} from '../domain/analytics.ts';
 
 type Fetcher=typeof fetch;
 
@@ -54,11 +36,7 @@ export function sheetsInvoker(token:string,fetcher:Fetcher=fetch){
  };
 }
 
-export async function loadForAccount(token:string,email:string,config:TargetConfig,fetcher:Fetcher=fetch):Promise<any>{
- const result=await loadWorkbook(sheetsInvoker(token,fetcher),config);
- if(result.status!=='success')return result;
- const access=checkAllowed(result.data,email);
- // Do not hand data to the UI for an account outside the list.
- if(!access.ok)return{status:'access_denied',message:access.message,allowedEmails:null};
- return{...result,allowedEmails:access.list};
+/** Access is decided by Google: an account the sheet is not shared with gets a 403/404 and no data. */
+export async function loadForAccount(token:string,config:TargetConfig,fetcher:Fetcher=fetch):Promise<any>{
+ return loadWorkbook(sheetsInvoker(token,fetcher),config);
 }
