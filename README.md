@@ -1,6 +1,6 @@
 # 沃克思私人營運工作台
 
-日常六分頁維護方式見 [SIX-TABS.md](SIX-TABS.md)。其餘分頁保留為隱藏備份；網站僅讀取六個主要分頁與設定。
+新增報價單與發票的流程（雲端同步＋自動匯入文件）見 [ADD-DATA-zh-TW.md](ADD-DATA-zh-TW.md)。日常六分頁維護方式見 [SIX-TABS.md](SIX-TABS.md)。其餘分頁保留為隱藏備份；網站僅讀取六個主要分頁與設定。
 
 Traditional Chinese, read-only business dashboard built with Vinext and Sites Workers. The Google Sheet remains the editable system of record. Source identifiers live in the server-only `lib/server/source-target.json`; no financial snapshot is bundled into the client.
 
