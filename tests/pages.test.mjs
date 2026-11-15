@@ -53,3 +53,14 @@ test('Google permission and expiry errors map to clear statuses',async()=>{
  assert.equal((await loadForAccount('tok','owner@x.com',target,fakeSheets('owner@x.com',{status:403}).fetcher)).status,'access_denied');
  assert.equal((await loadForAccount('tok','owner@x.com',target,fakeSheets('owner@x.com',{status:401}).fetcher)).status,'reauthentication_required');
 });
+
+test('Google error bodies map to the specific fix the visitor needs',async()=>{
+ const {googleError}=await import('../lib/pages/google-sheets.ts');
+ const body=(status,message,reason)=>({error:{status,message,details:reason?[{reason}]:[]}});
+ assert.match(googleError(403,body('PERMISSION_DENIED','Google Sheets API has not been used in project 1 before or it is disabled.','SERVICE_DISABLED')).message,/尚未啟用 Google Sheets API/);
+ assert.match(googleError(403,body('PERMISSION_DENIED','Request had insufficient authentication scopes.','ACCESS_TOKEN_SCOPE_INSUFFICIENT')).message,/沒有允許「查看 Google 試算表」/);
+ assert.match(googleError(400,body('FAILED_PRECONDITION','This operation is not supported for this document')).message,/不是 Google 試算表格式/);
+ assert.match(googleError(403,body('PERMISSION_DENIED','The caller does not have permission')).message,/共用給目前登入的帳號/);
+ assert.match(googleError(404,body('NOT_FOUND','Requested entity was not found.')).message,/找不到這份試算表/);
+ assert.equal(googleError(401,null).status,'reauthentication_required');
+});
