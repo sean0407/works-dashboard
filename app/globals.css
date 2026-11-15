@@ -77,6 +77,7 @@ main{padding-top:28px}
 .subtle-tag,.badge{font-size:var(--fs-meta)}
 .badge{color:var(--text-2)}
 .text-link{font-size:var(--fs-sm);color:var(--accent)}
+.quality-strip .text-link{font-size:var(--fs-sm)}
 .chart-tabs button{font-size:var(--fs-sm);color:var(--text-3)}
 .chart-axis{font-size:12px;fill:#7b887f}
 .chart-foot,.chart-data,.chart-data table{font-size:var(--fs-meta);color:var(--text-3)}
@@ -133,3 +134,41 @@ td small{font-size:var(--fs-meta);color:var(--text-3)}
 @media(max-width:1250px) and (min-width:761px){.sidebar{width:216px;padding-left:12px;padding-right:12px}.main-shell{margin-left:216px;width:calc(100% - 216px)}.brand{padding:0 8px}.brand b{letter-spacing:3px}}
 @media(max-width:1050px){.nav-item{font-size:var(--fs-body);padding:11px 12px}}
 @media(max-width:760px){.metrics{grid-template-columns:minmax(0,1fr)}.metric-card{min-height:0}.metric-note{min-height:0}.sidebar{padding-top:24px}.topbar{height:58px}.page-heading h1{font-size:26px}.page-heading p{max-width:none}.metric-value{font-size:26px}.metric-note,.metric-bottom{font-size:var(--fs-meta)}.chart-foot{font-size:var(--fs-meta)}.top-date span{display:none}}
+
+/* ===== Case progress (提案 → 報價 → 成交 → 開票 → 結案) ===== */
+:root{--st-提案:#c9d6c4;--st-報價:#d8c27a;--st-成交:#7fae95;--st-開票:#3f8a73;--st-結案:#1f5a49;--st-未成交:#b9bfb8}
+.seg-提案{background:var(--st-提案)}.seg-報價{background:var(--st-報價)}.seg-成交{background:var(--st-成交)}.seg-開票{background:var(--st-開票)}.seg-結案{background:var(--st-結案)}.seg-未成交{background:var(--st-未成交)}
+.stage-bar{display:flex;gap:3px;height:12px;border-radius:6px;overflow:hidden;background:#eef2ec}
+.stage-bar .seg{border:0;padding:0;min-width:6px;cursor:pointer}
+.stage-bar .seg:hover{filter:brightness(.92)}
+.stage-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px 18px;margin-top:18px}
+.stage-pick{display:flex;align-items:center;gap:10px;padding:10px 8px;border-radius:7px;text-align:left;color:var(--text-2);font-size:var(--fs-body)}
+.stage-pick:hover{background:#f3f6f1}
+.stage-pick>span:nth-child(2){display:flex;flex-direction:column;min-width:0}
+.stage-pick small{font-size:var(--fs-meta);color:var(--text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.stage-pick b{margin-left:auto;font-size:18px;font-weight:600;color:var(--text-strong)}
+.stage-dot{width:10px;height:10px;border-radius:50%;flex:none}
+.stepper{display:flex;flex-direction:column;gap:6px;min-width:0}
+.stepper ol{display:flex;list-style:none;margin:0;padding:0}
+.stepper li{flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;position:relative;font-size:var(--fs-meta);color:var(--text-3);min-width:34px}
+.stepper li::before{content:"";position:absolute;top:6px;left:-50%;right:50%;height:2px;background:#dfe6dc}
+.stepper li:first-child::before{display:none}
+.stepper li.done::before,.stepper li.current::before{background:var(--st-開票)}
+.stepper .dot{width:14px;height:14px;border-radius:50%;border:2px solid #cbd5c8;background:#fff;position:relative;z-index:1}
+.stepper li.done .dot{background:var(--st-開票);border-color:var(--st-開票)}
+.stepper li.current .dot{background:#fff;border-color:var(--st-開票);box-shadow:0 0 0 4px rgba(63,138,115,.18)}
+.stepper li.current .label{color:var(--text-strong);font-weight:600}
+.stepper.compact{flex-direction:row;align-items:center;gap:12px;flex-wrap:wrap}
+.stepper.compact ol{width:150px;flex:none}
+.stepper.compact li{min-width:0}
+.stepper-current{font-size:var(--fs-body);color:var(--text-strong);font-weight:600}
+.stepper.lost .badge{font-size:var(--fs-sm)}
+.drawer-stats .stepper{margin-top:10px}
+.stage-filters{display:flex;flex-wrap:wrap;gap:8px;padding:0 23px 18px}
+.stage-filters button{display:inline-flex;align-items:center;gap:8px;padding:8px 14px;border:1px solid var(--line);border-radius:999px;font-size:var(--fs-sm);color:var(--text-2);background:#fff}
+.stage-filters button b{font-weight:600;color:var(--text-strong)}
+.stage-filters button.active{background:var(--dark);border-color:var(--dark);color:#fff}
+.stage-filters button.active b{color:#fff}
+@media(max-width:1050px){.stage-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:760px){.stage-grid{grid-template-columns:minmax(0,1fr)}.stage-filters{padding:0 14px 14px}.stepper.compact ol{width:130px}}
+@media(max-width:760px){.case-button strong{min-width:128px}.case-button{min-width:128px}}

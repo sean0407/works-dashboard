@@ -4,11 +4,14 @@ export type Dataset = Record<string, Row[]>;
 export type Period = { start: string | null; end: string | null };
 export type Filters = { period: Period; today: string; clientId?: string; brand?: string; status?: string; search?: string; activity?: Period };
 export type Issue = { type: string; caseId?: string; description: string };
-export type DerivedCase = Row & { won: boolean; lost: boolean; closed: boolean; saleDate: string | null; saleNet: number | null; historical: boolean; certified: boolean; unverifiedWon: boolean; derivedStatus: string };
+export type DerivedCase = Row & { won: boolean; lost: boolean; closed: boolean; saleDate: string | null; saleNet: number | null; historical: boolean; certified: boolean; unverifiedWon: boolean; stage: CaseStage; stageFlag: string | null; invoicedGross: number | null; derivedStatus: string };
 export type DerivedInvoice = Row & {balance:number|null;paid:number|null;overdue:boolean};
 const INVOICE_STATUSES=['有效','作廢'];
 const CASE_STATUSES=['需求接洽','準備報價','已報價待確認','已成交','未成交','取消','待核對'];
 const CASE_MODES=['歷史','新案'];
+/** Operational progress shown on the case views; 未成交 is a separate terminal state. */
+export const CASE_STAGES = ['提案','報價','成交','開票','結案'] as const;
+export type CaseStage = typeof CASE_STAGES[number] | '未成交';
 export const text = (v: unknown) => v == null ? '' : String(v);
 export const yes = (v: unknown) => v === true || v === '是';
 export const money = (v: unknown,allowNegative=false): number | null => {
@@ -164,7 +167,12 @@ export function derive(data: Dataset, filters: Filters) {
     const unverifiedWon=!won&&text(c.status)==='已成交';
     if(unverifiedWon)issues.push({type:'won_evidence',caseId:text(c.id),description:historical?`${text(c.number)} 商機狀態為已成交，但尚無有效發票；未計入成交，也不列入待成交。`:`${text(c.number)} 商機狀態為已成交，但缺少可辨識的簽回文件ID或成交決策日；未計入成交，也不列入待成交。`});
     if(won&&!saleDate)issues.push({type:'sale_date',caseId:text(c.id),description:'成交依據已存在，但沒有有效日期；無法歸入指定期間。'});
-    return {...c,won,lost,closed,saleDate,saleNet:won?saleNet:null,historical,certified,unverifiedWon,derivedStatus:won?'已成交':lost?'未成交':unverifiedWon?'待核對':text(c.status)||'待核對'};
+    // 結案 follows the owner's manual 結案狀態 only; the other stages follow the evidence in the sheet.
+    const hasQuote=rows('quotes').some(q=>q.caseId===c.id)||text(c.status)==='已報價待確認';
+    const stage:CaseStage=lost?'未成交':text(c.closureStatus)==='已結案'?'結案':invoices.length?'開票':(won||unverifiedWon)?'成交':hasQuote?'報價':'提案';
+    const stageFlag=unverifiedWon&&stage==='成交'?'成交依據待核對':null;
+    const invoicedGross=invoices.length?sumKnown(invoices.map(i=>money(i.gross))):null;
+    return {...c,won,lost,closed,stage,stageFlag,invoicedGross,saleDate,saleNet:won?saleNet:null,historical,certified,unverifiedWon,derivedStatus:won?'已成交':lost?'未成交':unverifiedWon?'待核對':text(c.status)||'待核對'};
   });
   const caseDimensions=caseList.filter(c=>{
     if(filters.brand&&c.brand!==filters.brand)return false;
