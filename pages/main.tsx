@@ -40,7 +40,7 @@ function App(){
  },[session]);
  const account=useMemo<DashboardAccount|null>(()=>session?{email:session.email,allowedEmails:allowed,spreadsheetUrl,onSignOut:signOut}:null,[session,allowed,signOut]);
  return <>
-  <Dashboard notice={problem} key={session?.email??'anon'} signedIn={!!session} loadData={session?loadData:undefined} onSignIn={signIn} signInLabel="使用 Google 帳號登入" account={account}/>
+  <Dashboard notice={config.googleClientId?problem:null} signInDisabledReason={config.googleClientId?null:'Google 登入尚未啟用：網站管理者需先建立 Google OAuth 用戶端 ID，並填入 pages/config.json。'} key={session?.email??'anon'} signedIn={!!session} loadData={session?loadData:undefined} onSignIn={signIn} signInLabel="使用 Google 帳號登入" account={account}/>
  </>;
 }
 createRoot(document.getElementById('root')!).render(<StrictMode><App/></StrictMode>);
