@@ -122,7 +122,8 @@
         "scheduleId": "安排ID",
         "expectedGross": "應開含稅",
         "plannedDate": "應開票日",
-        "scheduleConfirmed": "安排已確認"
+        "scheduleConfirmed": "安排已確認",
+        "collected": "已收款"
       }
     },
     "receipts": {
