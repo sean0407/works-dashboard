@@ -94,3 +94,10 @@ test('folders are read from the 設定 sheet with their kinds',()=>{
  assert.deepEqual(JSON.parse(JSON.stringify(foldersFromSettings(values))),[{id:'1NLSl-o7ga47UaI8d86zdleJ8RUAtDVoD',kind:'報價單'},{id:'1e3FxLVymjCwRgFJo7DH4VNgbq1o70Zep',kind:'發票'}]);
  assert.equal(foldersFromSettings([['設定項目','設定值']]).length,0);
 });
+
+test('a second copy of an already registered file (same content hash) is skipped',()=>{
+ const known=blank();known[headers.indexOf('文件ID')]='doc_old';known[headers.indexOf('SHA256')]='sha-fileEEEEEEEEEE';known[headers.indexOf('文件連結')]='https://drive.google.com/file/d/otherFileId0001/view';
+ const twin={...file('fileFFFFFFFFFF','A901 副本.pdf'),sha256:'sha-fileEEEEEEEEEE'};
+ const plan=planChanges(headers,[known],[twin,file('fileGGGGGGGGGG','A902 新檔.pdf'),{...file('fileHHHHHHHHHH','A902 新檔 (1).pdf'),sha256:'sha-fileGGGGGGGGGG'}]);
+ assert.equal(plan.append.length,1);assert.equal(at(plan.append[0],'原始檔名'),'A902 新檔.pdf');assert.equal(plan.duplicates,2);
+});

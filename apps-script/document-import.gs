@@ -83,8 +83,10 @@ function kindFor(file, name) {
 function planChanges(headers, rows, files, hash) {
   hash = hash || function (f) { return f.sha256 || ''; };
   var col = columnIndex(headers);
-  var linked = {}, knownIds = {}, unlinkedByName = {};
+  var linked = {}, knownIds = {}, unlinkedByName = {}, knownSha = {};
   rows.forEach(function (row, i) {
+    var sha = String(row[col.sha256] || '').trim();
+    if (sha) knownSha[sha] = true;
     var fid = driveFileIdFromUrl(row[col.url]);
     if (fid) linked[fid] = true;
     var id = String(row[col.id] || '').trim();
@@ -92,7 +94,7 @@ function planChanges(headers, rows, files, hash) {
     var name = String(row[col.filename] || '').trim();
     if (name && !String(row[col.url] || '').trim() && !(name in unlinkedByName)) unlinkedByName[name] = i;
   });
-  var result = { append: [], update: [], skipped: 0 };
+  var result = { append: [], update: [], skipped: 0, duplicates: 0 };
   var seen = {};
   files.forEach(function (file) {
     if (seen[file.id] || linked[file.id] || knownIds[docIdFor(file.id)]) { result.skipped++; return; }
@@ -112,12 +114,16 @@ function planChanges(headers, rows, files, hash) {
       result.update.push({ row: i + 2, values: values });
       return;
     }
+    // A second copy of a file that is already registered (same content hash) is not a new document.
+    var sha = hash(file);
+    if (sha && knownSha[sha]) { result.skipped++; result.duplicates++; return; }
+    if (sha) knownSha[sha] = true;
     var row = headers.map(function () { return ''; });
     row[col.id] = docIdFor(file.id);
     row[col.kind] = kindFor(file, name);
     row[col.filename] = name;
     row[col.url] = file.url;
-    row[col.sha256] = hash(file);
+    row[col.sha256] = sha;
     row[col.caseNumber] = guessCaseNumber(name, file.folder);
     row[col.reviewNotes] = AUTO_NOTE;
     row[col.reviewStatus] = AUTO_STATUS;
@@ -337,7 +343,8 @@ function importDocuments() {
     var plan = planChanges(headers, rows, files, function (f) { return sha256Hex_(f.blob()); });
     plan.update.forEach(function (u) { sheet.getRange(u.row, 1, 1, headers.length).setValues([u.values.slice(0, headers.length)]); });
     if (plan.append.length) sheet.getRange(sheet.getLastRow() + 1, 1, plan.append.length, headers.length).setValues(plan.append);
-    ss.toast('新增 ' + plan.append.length + ' 列、補上連結 ' + plan.update.length + ' 列。', '沃克思文件匯入', 8);
+    ss.toast('新增 ' + plan.append.length + ' 列、補上連結 ' + plan.update.length + ' 列' + (plan.duplicates ? '、略過重複檔案 ' + plan.duplicates + ' 個' : '') + '。', '沃克思文件匯入', 8);
+    console.log('importDocuments: append=' + plan.append.length + ' update=' + plan.update.length + ' duplicates=' + plan.duplicates + ' skipped=' + plan.skipped);
     if (plan.append.length) extractRecords_(ss);
   } finally {
     lock.releaseLock();
@@ -411,9 +418,12 @@ function extractRecords_(ss) {
     var i = values[0].map(function (h) { return String(h).trim(); }).indexOf('來源文件ID');
     values.slice(1).forEach(function (r) { if (r[i]) referenced[String(r[i]).trim()] = true; });
   });
-  var docs = [];
+  var docs = [], failed = 0, firstBySha = {};
   for (var r = 1; r < docValues.length && docs.length < EXTRACT_LIMIT; r++) {
     var row = docValues[r], kind = String(row[col.kind] || '').trim(), docId = String(row[col.id] || '').trim();
+    // A duplicate copy of an already registered file must not create a second quote or invoice row.
+    var sha = String(row[col.sha256] || '').trim();
+    if (sha) { if (firstBySha[sha]) continue; firstBySha[sha] = true; }
     if ((kind !== '報價單' && kind !== '發票') || !docId || referenced[docId]) continue;
     if (String(row[col.reviewStatus] || '').trim() !== AUTO_STATUS || String(row[col.reviewNotes] || '').indexOf(AUTO_NOTE) !== 0) continue;
     var fileId = driveFileIdFromUrl(row[col.url]); if (!fileId) continue;
@@ -421,7 +431,7 @@ function extractRecords_(ss) {
     try {
       var text = pdfText_(fileId);
       docs.push({ docId: docId, kind: kind, filename: name, fields: kind === '報價單' ? extractQuote(text, name) : extractInvoice(text, name) });
-    } catch (e) { /* 讀不到文字的檔案留給人工登錄 */ }
+    } catch (e) { failed++; console.log('extractRecords: ' + name + ' 讀取失敗：' + e); }
   }
   var caseIds = caseIdsByNumber(caseSheet.getDataRange().getValues());
   var added = 0;
@@ -433,7 +443,8 @@ function extractRecords_(ss) {
     if (rows.length) spec[1].getRange(spec[1].getLastRow() + 1, 1, rows.length, spec[2][0].length).setValues(rows);
     added += rows.length;
   });
-  ss.toast('讀出並新增 ' + added + ' 列報價／發票（均標記待核對）。', '沃克思', 8);
+  ss.toast('讀出並新增 ' + added + ' 列報價／發票（均標記待核對）' + (failed ? '；' + failed + ' 份讀取失敗' : '') + '。', '沃克思', 8);
+  console.log('extractRecords: candidates=' + docs.length + ' added=' + added + ' failed=' + failed);
 }
 
 /** PDF → text through Drive's OCR conversion; the temporary Google Doc is trashed right away. */
@@ -464,4 +475,18 @@ function sendDailyDigest() {
   var settings = ss.getSheetByName(SETTINGS_SHEET);
   if (settings) settings.getDataRange().getValues().forEach(function (r) { if (String(r[0]).trim() === 'digest_email') to = String(r[1] || '').trim(); });
   MailApp.sendEmail(to || Session.getEffectiveUser().getEmail(), '沃克思每日摘要 ' + today + '｜該追 ' + digest.followups.length + '・活動 ' + digest.activities.length + '・逾期 ' + digest.overdue.length, body);
+}
+
+
+/** 檢查用：讀最新一份報價單 PDF 並把讀到的欄位寫進執行記錄，不會改動試算表。 */
+function debugExtract() {
+  var values = SpreadsheetApp.getActive().getSheetByName(DOC_SHEET).getDataRange().getValues(), col = columnIndex(values[0]);
+  for (var r = values.length - 1; r >= 1; r--) {
+    var fileId = driveFileIdFromUrl(values[r][col.url]);
+    if (String(values[r][col.kind]).trim() !== '報價單' || !fileId) continue;
+    var name = String(values[r][col.filename] || ''), text = pdfText_(fileId);
+    console.log('debugExtract: 第 ' + (r + 1) + ' 列，文字長度 ' + text.length + '，欄位 ' + JSON.stringify(extractQuote(text, name)));
+    return;
+  }
+  console.log('debugExtract: 找不到有連結的報價單');
 }
