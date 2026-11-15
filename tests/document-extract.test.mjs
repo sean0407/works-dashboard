@@ -51,3 +51,11 @@ test('daily digest lists due follow-ups, activities in the next 7 days and overd
  const body=digestBody(d,'2026-11-16');assert.match(body,/今天該追】1 案/);assert.match(body,/逾期應收】1 張，合計 NT\$ 1,050/);
  assert.equal(digestBody({followups:[],activities:[],overdue:[],overdueTotal:0},'2026-11-16'),null);
 });
+
+test('quote amounts are read when the labels come first and the figures after them',()=>{
+ const text='專案編號 A902 報價單 人頭費 200 60 位 12,000 『報價說明』 小計(未稅,未含服務費) 服務費(8%) 合計(未稅,含服務費) 營業稅(5%) 總計(含服務費、營業稅) 100,000 8,000 108,000 5,400 113,400 1. 此為專案價 服務費:7% 2026 年 08月 26 日/示範製表';
+ const f=extractQuote(text,'A902 示範-報價單.pdf');
+ assert.equal(f.net,108000);assert.equal(f.tax,5400);assert.equal(f.gross,113400);assert.equal(f.feeRate,0.08);assert.equal(f.date,'2026-08-26');
+ const bad=extractQuote('合計(未稅,含服務費) 營業稅(5%) 總計(含服務費、營業稅) 100,000 8,000 999 5,400 113,400','x.pdf');
+ assert.equal(bad.net,null);assert.equal(bad.gross,null);
+});

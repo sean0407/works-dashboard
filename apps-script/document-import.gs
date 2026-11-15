@@ -169,6 +169,14 @@ function extractQuote(text, filename) {
   var taxMatch = /營業稅\s*\(\d+(?:\.\d+)?%\)\s*([\d,]+)(?:\s*([\d,]+))?/.exec(t);
   var tax = amountFrom(taxMatch);
   var gross = taxMatch && taxMatch[2] ? amountFrom([null, taxMatch[2]]) : null;
+  if (net === null) {
+    // Google's PDF conversion lists the five labels first and the five amounts after them.
+    // Accept the run of numbers only when 小計＋服務費＝合計 and 合計＋營業稅＝總計.
+    var at = t.search(/合計\s*\(未稅/), n = at < 0 ? [] : (t.slice(at, at + 400).match(/\d[\d,]*/g) || []).map(function (x) { return Number(x.replace(/,/g, '')); });
+    for (var i = 0; i + 4 < n.length; i++) {
+      if (n[i + 2] > 100 && Math.abs(n[i] + n[i + 1] - n[i + 2]) <= 2 && Math.abs(n[i + 2] + n[i + 3] - n[i + 4]) <= 2) { net = n[i + 2]; tax = n[i + 3]; gross = n[i + 4]; break; }
+    }
+  }
   if (net !== null && tax !== null && (gross === null || Math.abs(net + tax - gross) > 2)) gross = net + tax;
   var rate = /服務費\s*\(\s*(\d+(?:\.\d+)?)\s*%\s*\)/.exec(t);
   var made = /(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日\s*\/\s*\S*製表/.exec(t);
