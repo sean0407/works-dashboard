@@ -494,6 +494,7 @@ function debugExtract() {
     if (String(values[r][col.kind]).trim() !== '報價單' || !fileId) continue;
     var name = String(values[r][col.filename] || ''), text = pdfText_(fileId);
     console.log('debugExtract: 第 ' + (r + 1) + ' 列，文字長度 ' + text.length + '，欄位 ' + JSON.stringify(extractQuote(text, name)));
+    console.log('debugExtract 文字: ' + normalizeText(text).slice(0, 900));
     return;
   }
   console.log('debugExtract: 找不到有連結的報價單');
