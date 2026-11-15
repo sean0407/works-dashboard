@@ -64,3 +64,10 @@ test('Google error bodies map to the specific fix the visitor needs',async()=>{
  assert.match(googleError(404,body('NOT_FOUND','Requested entity was not found.')).message,/找不到這份試算表/);
  assert.equal(googleError(401,null).status,'reauthentication_required');
 });
+
+test('allowed_emails may be split across several rows',()=>{
+ const d=settings([{key:'allowed_emails',value:'a@x.com'},{key:'timezone',value:'Asia/Taipei'},{key:'allowed_emails',value:'B@x.com'},{key:'allowed_emails',value:'c@x.com, d@x.com'}]);
+ assert.deepEqual(allowedEmails(d),['a@x.com','b@x.com','c@x.com','d@x.com']);
+ assert.equal(checkAllowed(d,'b@x.com').ok,true);
+ assert.equal(checkAllowed(d,'d@x.com').ok,true);
+});

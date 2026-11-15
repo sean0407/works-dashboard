@@ -5,9 +5,10 @@ import {text,type Dataset} from '../domain/analytics.ts';
 export const ALLOWED_EMAILS_KEY='allowed_emails';
 
 export function allowedEmails(data:Dataset):string[]|null{
- const row=(data.settings??[]).find(r=>text(r.key).trim()===ALLOWED_EMAILS_KEY);
- if(!row)return null;
- return [...new Set(text(row.value).split(/[\s,;，；]+/).map(s=>s.trim().toLowerCase()).filter(Boolean))];
+ // One row per account or several accounts in one cell are both accepted.
+ const rows=(data.settings??[]).filter(r=>text(r.key).trim()===ALLOWED_EMAILS_KEY);
+ if(!rows.length)return null;
+ return [...new Set(rows.flatMap(row=>text(row.value).split(/[\s,;，；]+/)).map(s=>s.trim().toLowerCase()).filter(Boolean))];
 }
 
 /** Fail closed: a missing or empty list admits nobody. */
