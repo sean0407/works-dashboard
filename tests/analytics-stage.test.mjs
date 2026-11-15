@@ -54,3 +54,10 @@ test('addition cases get their own stage',()=>{
  assert.equal(c.add.stage,'報價');
  assert.equal(c.p.stage,'成交');
 });
+
+test('payment types summarise the case invoices in billing order',()=>{
+ const c=stageOf([{id:'p',status:'已成交',...signed},{id:'f',status:'已成交',...signed},{id:'none',status:'準備報價',mode:'新案',confirmed:true}],{invoices:[inv('11','p',300,{type:'尾款'}),inv('12','p',200,{type:'訂金'}),inv('13','p',50,{type:'追加'}),inv('14','f',1050,{type:'全款'}),inv('15','f',10,{type:'訂金',status:'作廢'})]});
+ assert.equal(c.p.paymentTypes,'訂金＋尾款＋追加');
+ assert.equal(c.f.paymentTypes,'全款','voided invoices do not count');
+ assert.equal(c.none.paymentTypes,'');
+});
