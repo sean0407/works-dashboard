@@ -7,6 +7,7 @@ import {subcontractView,type CaseCost} from '@/lib/domain/subcontracts';
 import {stageSummary} from '@/lib/domain/stages';
 import {CoverageSummary,DocumentCoveragePanel,type CoverageFilter} from './document-coverage';
 import {DataTable,type Column} from './data-table';
+import {KpiCards} from './kpi-cards';
 type Analysis=ReturnType<typeof derive>;
 type ProjectFilter=CaseStage|'all'|'invoiced';
 type QuoteView='all'|'pending'|'latest';
@@ -86,9 +87,26 @@ function Trend({data,metric}:{data:Analysis['trends'];metric:'quoted'|'invoiced'
  const points=data.map((d,index)=>({x:64+index/Math.max(data.length-1,1)*660,y:210-d[metric]/top*170,d}));const line=points.map((p,index)=>`${index?'L':'M'}${p.x},${p.y}`).join(' ');const h=hover===null?null:points[hover];
  return <div className="chart-wrap"><svg viewBox="0 0 760 260" role="img" aria-label={`每月${metric==='quoted'?'已報價未稅':metric==='invoiced'?'已開票未稅':'待成交未稅'}趨勢`}><defs><linearGradient id="areaFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#378477" stopOpacity=".17"/><stop offset="100%" stopColor="#378477" stopOpacity="0"/></linearGradient></defs>{[0,1,2,3,4].map(t=><g key={t}><line x1="64" x2="724" y1={210-t*42.5} y2={210-t*42.5} stroke="#e9eeeb" strokeDasharray={t?'3 5':undefined}/><text x="48" y={214-t*42.5} textAnchor="end" className="chart-axis">{compact(top*t/4)}</text></g>)}<path d={`${line} L${points.at(-1)!.x},210 L64,210 Z`} fill="url(#areaFill)"/><path d={line} stroke="#377d70" strokeWidth="2.7" fill="none" strokeLinecap="round" strokeLinejoin="round"/>{points.map((p,index)=><g key={p.d.month} onMouseEnter={()=>setHover(index)} onMouseLeave={()=>setHover(null)}><circle cx={p.x} cy={p.y} r={hover===index?5:3.5} fill="#fff" stroke="#377d70" strokeWidth="2"/><rect x={p.x-22} y="24" width="44" height="200" fill="transparent"/><text x={p.x} y="240" className="chart-axis" textAnchor="middle">{data.length<=7?p.d.month.replace('-',' / '):p.d.month.slice(5)+'月'}</text></g>)}{h&&<g pointerEvents="none"><rect x={Math.min(Math.max(h.x-75,64),574)} y="4" width="150" height="31" rx="6" fill="#183f36"/><text x={Math.min(Math.max(h.x,139),649)} y="24" textAnchor="middle" fill="#fff" fontSize="11">{h.d.month} · NT$ {fmt(h.d[metric])}</text></g>}</svg><details className="chart-data"><summary>檢視趨勢數據</summary><DataTable rows={data} columns={[{key:"month",label:"月份",kind:"date",value:(d:typeof data[number])=>d.month,filter:"none"},{key:"amount",label:"已知金額",kind:"num",value:(d:typeof data[number])=>d[metric],filter:"none"},{key:"unknown",label:"金額待確認（筆）",kind:"num",value:(d:typeof data[number])=>metric==="quoted"?d.quotedUnknown:metric==="invoiced"?d.invoiceUnknown:d.pendingUnknown,filter:"none"}]} rowKey={d=>d.month} fileName={`趨勢-${metric}`}/></details></div>;
 }
+const PIE_COLORS=['#1f4a3a','#3f7a5c','#6f9e7a','#a3c3a2','#c8a96a','#d98f5c','#7f9bb3','#b9a3c9'];
 function Ranking({a,select}:{a:Analysis;select:(id:string)=>void}){
- if(!a.ranking.length)return <Empty title="此期間尚無開票紀錄" description="有效發票有未稅金額與付款公司後，即可比較合作概況。"/>;const max=Math.max(...a.ranking.map(r=>r.net),1);
- return <div className="ranking"><div className="ranking-scroll">{a.ranking.map((r,index)=><button key={r.clientId} className="rank-row" onClick={()=>select(r.clientId)}><span className="rank-number">{r.knownCount?String(index+1).padStart(2,'0'):'—'}</span><div className="rank-main"><div><strong title={r.name}>{r.name}</strong><span>{r.knownCount ? `${r.unknown?'已知 ':''}${fmt(r.net)}` : '待確認'}</span></div><div className="rank-track"><span style={{width:`${r.net/max*100}%`}}/></div><small>{r.count} 件原始專案{r.unknown?` · ${r.unknown} 張發票金額待補`:''}</small></div></button>)}</div><p className="panel-footnote">共 {a.ranking.length} 家付款公司，可捲動查看；點選即篩選該公司。</p></div>;
+ const [hover,setHover]=useState<number|null>(null);
+ const known=a.ranking.filter(r=>r.knownCount&&r.net>0);
+ if(!known.length)return <Empty title="此期間尚無開票紀錄" description="有效發票有未稅金額與付款公司後，即可比較合作概況。"/>;
+ const total=known.reduce((t,r)=>t+r.net,0);const TOP=7;
+ const top=known.slice(0,TOP);const rest=known.slice(TOP);
+ const slices=[...top.map(r=>({id:r.clientId,name:r.name,net:r.net,count:r.count})),...(rest.length?[{id:'',name:`其他 ${rest.length} 家`,net:rest.reduce((t,r)=>t+r.net,0),count:rest.reduce((t,r)=>t+r.count,0)}]:[])];
+ const R=70,C=2*Math.PI*R;let offset=0;
+ const focus=hover===null?null:slices[hover];
+ return <div className="ranking pie-ranking">
+  <div className="pie-wrap"><svg viewBox="0 0 180 180" className="pie" role="img" aria-label="主要合作客戶開票占比">
+   <circle cx="90" cy="90" r={R} fill="none" stroke="#eef1ec" strokeWidth="30"/>
+   {slices.map((x,i)=>{const len=x.net/total*C;const el=<circle key={x.id||'rest'} cx="90" cy="90" r={R} fill="none" stroke={PIE_COLORS[i%PIE_COLORS.length]} strokeWidth={hover===i?36:30} strokeDasharray={`${Math.max(len-1.5,0.5)} ${C}`} strokeDashoffset={-offset} transform="rotate(-90 90 90)" className={x.id?'pie-slice clickable':'pie-slice'} onMouseEnter={()=>setHover(i)} onMouseLeave={()=>setHover(null)} onClick={()=>{if(x.id)select(x.id);}}><title>{`${x.name}：${fmt(x.net)}（${(x.net/total*100).toFixed(1)}%）`}</title></circle>;offset+=len;return el;})}
+   <text x="90" y="84" textAnchor="middle" className="pie-center-label">{focus?`${(focus.net/total*100).toFixed(1)}%`:'開票未稅'}</text>
+   <text x="90" y="104" textAnchor="middle" className="pie-center-value">{focus?fmt(focus.net):fmt(total)}</text>
+  </svg></div>
+  <ul className="pie-legend">{slices.map((x,i)=><li key={x.id||'rest'}><button type="button" disabled={!x.id} onMouseEnter={()=>setHover(i)} onMouseLeave={()=>setHover(null)} onClick={()=>{if(x.id)select(x.id);}} title={x.id?'點選即篩選該公司':`${rest.map(r=>r.name).join('、')}`}><span className="pie-swatch" style={{background:PIE_COLORS[i%PIE_COLORS.length]}}/><span className="pie-name">{x.name}</span><span className="pie-pct">{(x.net/total*100).toFixed(1)}%</span><span className="pie-amount">{fmt(x.net)}</span></button></li>)}</ul>
+  <p className="panel-footnote">共 {a.ranking.length} 家付款公司{a.ranking.length>known.length?`（${a.ranking.length-known.length} 家金額待確認未列入）`:''}；點選即篩選該公司。</p>
+ </div>;
 }
 const STAGE_ORDER:CaseStage[]=[...CASE_STAGES,'未成交'];
 const OVERVIEW_STAGES:CaseStage[]=['提案','報價','開票','結案'];
@@ -127,7 +145,7 @@ function ProjectTable({a,data,select,stage,setStage}:{a:Analysis;data:Dataset;se
   {key:'invoiced',label:'已開票',count:billed.length,note:`開票未稅 NT$ ${fmt(sumOf(billed,c=>c.saleNet))}`},
  ];
  const other=stage!=='all'&&!cards.some(k=>k.key===stage);
- return <><div className="stage-kpis" role="group" aria-label="依進度篩選">{cards.map(k=><button key={k.key} className={stage===k.key?'active':''} aria-pressed={stage===k.key} onClick={()=>setStage(k.key)}><span>{k.label}</span><strong>{k.count}<small> 筆</small></strong><p>{k.note}</p></button>)}</div>
+ return <><KpiCards label="依進度篩選" value={stage as ProjectFilter} onChange={setStage} items={cards.map(k=>({key:k.key,label:k.label,value:k.count,unit:"筆",note:k.note}))}/>
  {other&&<div className="stage-filter-note">目前只顯示「{stage}」階段<button className="text-button" onClick={()=>setStage('all')}><X size={13}/>清除</button></div>}
  <DataTable rows={rows} columns={columns} rowKey={c=>text(c.id)} onRowClick={c=>select(text(c.id))} fileName="案件進度" empty={stage==='all'?'沒有案件':'沒有符合的案件'}/></>;
 }
@@ -155,9 +173,10 @@ function Quotes({data,a,period,select}:{data:Dataset;a:Analysis;period:any;selec
   {key:'latest',label:'最新報價',count:latest.length,unit:'份',note:`${new Set(latest.map(q=>text(q.caseId))).size} 案 · 未稅 NT$ ${fmt(sumNet(latest))}`},
  ];
  const shown=view==='pending'?pending:view==='latest'?latest:quotes;
- return <><div className="stage-kpis three quote-kpis" role="group" aria-label="依統計版本篩選">{cards.map(k=><button key={k.key} className={view===k.key?'active':''} aria-pressed={view===k.key} onClick={()=>setView(k.key)}><span>{k.label}</span><strong>{k.count}<small> {k.unit}</small></strong><p>{k.note}</p></button>)}</div><section className="panel"><PanelTitle title="報價版本紀錄" sub="按報價日期篩選 · 點欄名排序，第二列可篩選 · 點選列檢視案件"/>{!quotes.length?<Empty/>:<DataTable rows={shown} columns={columns} rowKey={q=>text(q.id)} onRowClick={q=>select(text(q.caseId))} fileName="報價版本紀錄"/>}</section></>;
+ return <><KpiCards className="page-kpis" label="依統計版本篩選" value={view} onChange={setView} items={cards.map(k=>({key:k.key,label:k.label,value:k.count,unit:k.unit,note:k.note}))}/><section className="panel"><PanelTitle title="報價版本紀錄" sub="按報價日期篩選 · 點欄名排序，第二列可篩選 · 點選列檢視案件"/>{!quotes.length?<Empty/>:<DataTable rows={shown} columns={columns} rowKey={q=>text(q.id)} onRowClick={q=>select(text(q.caseId))} fileName="報價版本紀錄"/>}</section></>;
 }
 function Subcontracts({data,a,period,select}:{data:Dataset;a:Analysis;period:any;select:(id:string)=>void}){
+ const [view,setView]=useState<'all'|'invoiced'|'vendors'>('all');
  const v=subcontractView(data,a.cases,period);const t=v.totals;
  const pct=(x:number|null)=>x===null?'—':`${x.toFixed(1)}%`;
  type R=typeof v.rows[number];
@@ -184,11 +203,30 @@ function Subcontracts({data,a,period,select}:{data:Dataset;a:Analysis;period:any
   {key:'status',label:'狀態',value:r=>text(r.status)||'有效',filter:'select',render:r=><Badge tone={(text(r.status)||'有效')==='有效'?'green':'neutral'}>{text(r.status)||'有效'}</Badge>},
   {key:'source',label:'原件',value:r=>safeUrl(r.sourceUrl)?'有':'未連結',filter:'select',render:r=><SourceLink url={r.sourceUrl}>開啟</SourceLink>},
  ];
- return <><div className="context-cards"><div><span>總發包金額（未稅）</span><strong><small>NT$ </small>{fmt(t.costNet)}</strong><p>{t.count} 筆有效單據{t.unknown?` · ${t.unknown} 筆金額待補`:''} · 涉及 {t.cases} 案</p></div><div><span>已開票（未稅）</span><strong><small>NT$ </small>{fmt(t.invoicedNet)}</strong><p>{t.invoicedCount} 張廠商發票 · 尚未開票 NT$ {fmt(t.costNet-t.invoicedNet)}（報價、請款單）</p></div><div><span>廠商數</span><strong>{t.vendors}<small> 家</small></strong><p>{t.unlinked?`${t.unlinked} 筆未連結案件 · `:''}只計狀態「有效」；已有發票的報價標「參考」、重複檔標「重複」，不重複計成本</p></div></div>
- <section className="panel"><PanelTitle title="各案發包與毛利" sub="開票未稅 − 發包未稅 · 發包金額有缺時毛利顯示待確認"/>{!v.perCase.length?<Empty title="此期間沒有發包紀錄" description="在試算表「發包項目」分頁新增廠商報價或發票後，重新整理即可看到。"/>:<DataTable rows={v.perCase} columns={caseCols} rowKey={c=>c.caseId} onRowClick={c=>select(c.caseId)} fileName="各案發包與毛利"/>}</section>
- <section className="panel"><PanelTitle title="發包單據明細" sub="廠商報價、發票與請款單 · 依文件日期篩選期間"/>{!v.rows.length?<Empty title="此期間沒有發包單據"/>:<DataTable rows={v.rows} columns={cols} rowKey={r=>text(r.id)} onRowClick={r=>{if(r.caseId)select(text(r.caseId));}} fileName="發包單據明細"/>}</section></>;
+ const counted=v.rows.filter(r=>(text(r.status)||'有效')==='有效');
+ const vendorMap=new Map<string,{vendor:string;count:number;net:number;unknown:number;invoiced:number;cases:Set<string>}>();
+ for(const r of counted){const k=text(r.vendor)||'未填廠商';const x=vendorMap.get(k)??{vendor:k,count:0,net:0,unknown:0,invoiced:0,cases:new Set<string>()};const n=money(r.net);x.count++;if(n==null)x.unknown++;else{x.net+=n;if(text(r.kind)==='發票')x.invoiced+=n;}if(r.caseId)x.cases.add(text(byCase.get(text(r.caseId))?.number)||text(r.caseNumber));vendorMap.set(k,x);}
+ type V={vendor:string;count:number;net:number;unknown:number;invoiced:number;cases:Set<string>};
+ const vendorRows=[...vendorMap.values()].sort((x,y)=>y.net-x.net);
+ const vendorCols:Column<V>[]=[
+  {key:'vendor',label:'發包廠商',value:x=>x.vendor,filter:'text',render:x=><strong className="cell-strong">{x.vendor}</strong>},
+  {key:'cases',label:'案號',value:x=>[...x.cases].join('、'),filter:'text'},
+  {key:'count',label:'有效單據',kind:'num',value:x=>x.count,filter:'none'},
+  {key:'net',label:'發包未稅',kind:'num',value:x=>x.net,filter:'none',render:x=><>{fmt(x.net)}{x.unknown>0&&<small className="amber-text">{x.unknown} 筆金額待補</small>}</>},
+  {key:'invoiced',label:'已開票未稅',kind:'num',value:x=>x.invoiced,filter:'none'},
+  {key:'open',label:'尚未開票',kind:'num',value:x=>x.net-x.invoiced,filter:'none'},
+ ];
+ const detail=view==='invoiced'?counted.filter(r=>text(r.kind)==='發票'):v.rows;
+ return <><KpiCards className="page-kpis" label="切換發包檢視" value={view} onChange={setView} items={[
+  {key:'all',label:'總發包金額（未稅）',prefix:'NT$',value:fmt(t.costNet),note:`${t.count} 筆有效單據${t.unknown?` · ${t.unknown} 筆金額待補`:''} · 涉及 ${t.cases} 案`},
+  {key:'invoiced',label:'已開票（未稅）',prefix:'NT$',value:fmt(t.invoicedNet),note:`${t.invoicedCount} 張廠商發票 · 尚未開票 NT$ ${fmt(t.costNet-t.invoicedNet)}`},
+  {key:'vendors',label:'廠商數',value:t.vendors,unit:'家',note:'點選查看各廠商發包與開票金額'},
+ ]}/>
+ {view==="vendors"?<section className="panel"><PanelTitle title="各廠商發包與開票" sub="只計狀態「有效」 · 尚未開票 = 報價或請款單金額"/>{!vendorRows.length?<Empty title="此期間沒有發包紀錄"/>:<DataTable rows={vendorRows} columns={vendorCols} rowKey={x=>x.vendor} fileName="各廠商發包"/>}</section>:<section className="panel"><PanelTitle title="各案發包與毛利" sub="開票未稅 − 發包未稅 · 發包金額有缺時毛利顯示待確認"/>{!v.perCase.length?<Empty title="此期間沒有發包紀錄" description="在試算表「發包項目」分頁新增廠商報價或發票後，重新整理即可看到。"/>:<DataTable rows={v.perCase} columns={caseCols} rowKey={c=>c.caseId} onRowClick={c=>select(c.caseId)} fileName="各案發包與毛利"/>}</section>}
+ <section className="panel"><PanelTitle title={view==="invoiced"?"已開票的廠商發票":"發包單據明細"} sub="廠商報價、發票與請款單 · 依文件日期篩選期間 · 狀態「參考／重複／作廢」不計成本"/>{!detail.length?<Empty title="此期間沒有發包單據"/>:<DataTable rows={detail} columns={cols} rowKey={r=>text(r.id)} onRowClick={r=>{if(r.caseId)select(text(r.caseId));}} fileName="發包單據明細"/>}</section></>;
 }
 function Finance({data,a,select}:{data:Dataset;a:Analysis;select:(id:string)=>void}){
+ const [view,setView]=useState<'all'|'outstanding'|'overdue'>('all');
  const m=a.metrics;const byCase=new Map(data.cases.map(c=>[c.id,c]));
  type Inv=Analysis['invoices'][number];
  const columns:Column<Inv>[]=[
@@ -203,7 +241,13 @@ function Finance({data,a,select}:{data:Dataset;a:Analysis;select:(id:string)=>vo
   {key:'balance',label:'應收餘額',kind:'num',value:i=>i.balance,filter:'none',render:i=>i.balance===null?<Badge tone="amber">待確認</Badge>:fmt(i.balance)},
   {key:'source',label:'原始發票',value:i=>data.documents.find(d=>d.id===i.sourceId)?.url?'有':'未連結',filter:'select',render:i=><SourceLink url={data.documents.find(d=>d.id===i.sourceId)?.url}>開啟</SourceLink>},
  ];
- return <><div className="context-cards"><div><span>有效開票含稅</span><strong><small>NT$ </small>{fmt(m.invoiceGross)}</strong><p>{m.invoiceCount} 張發票 · 按開票日篩選</p></div><div><span>已核對應收餘額</span><strong><small>NT$ </small>{fmt(m.outstandingGross)}</strong><p>{m.unknownReceiptCount?`${m.unknownReceiptCount} 張尚無完整收款證據`:'已核對分配後的餘額'}</p></div><div><span>已確認逾期應收</span><strong><small>NT$ </small>{fmt(m.overdueGross)}</strong><p>僅納入到期日、餘額均已確認者</p></div></div><div className="notice soft"><Info size={17}/><p>收款不明會保留「待確認」。發票與報價差異須另行核對，不會自動視為折讓或欠款。</p></div><section className="panel"><PanelTitle title="發票與應收明細" sub="含稅金額 · 點欄名排序，第二列可篩選"/>{!a.invoices.length?<Empty/>:<DataTable rows={a.invoices} columns={columns} rowKey={i=>text(i.id)} onRowClick={i=>select(text(i.caseId))} fileName="發票與應收明細"/>}</section><p className="section-note">作廢發票保留在案件明細與資料表中，不加入有效開票總額。實收趨勢按銀行入帳日計算。</p></>;
+ const outstanding=a.invoices.filter(i=>i.balance!==null&&i.balance>0),overdue=a.invoices.filter(i=>i.overdue);
+ const shown=view==='outstanding'?outstanding:view==='overdue'?overdue:a.invoices;
+ return <><KpiCards className="page-kpis" label="依應收狀態篩選" value={view} onChange={setView} items={[
+  {key:'all',label:'有效開票含稅',prefix:'NT$',value:fmt(m.invoiceGross),note:`${m.invoiceCount} 張發票 · 按開票日篩選`},
+  {key:'outstanding',label:'已核對應收餘額',prefix:'NT$',value:fmt(m.outstandingGross),note:`${outstanding.length} 張仍有餘額${m.unknownReceiptCount?` · ${m.unknownReceiptCount} 張收款待確認`:''}`},
+  {key:'overdue',label:'已確認逾期應收',prefix:'NT$',value:fmt(m.overdueGross),note:`${overdue.length} 張 · 到期日與餘額均已確認`},
+ ]}/><div className="notice soft"><Info size={17}/><p>收款不明會保留「待確認」。發票與報價差異須另行核對，不會自動視為折讓或欠款。</p></div><section className="panel"><PanelTitle title="發票與應收明細" sub="含稅金額 · 點欄名排序，第二列可篩選"/>{!a.invoices.length?<Empty/>:<DataTable rows={shown} columns={columns} rowKey={i=>text(i.id)} onRowClick={i=>select(text(i.caseId))} fileName="發票與應收明細"/>}</section><p className="section-note">作廢發票保留在案件明細與資料表中，不加入有效開票總額。實收趨勢按銀行入帳日計算。</p></>;
 }
 const ISSUE_LABEL:Record<string,string>={relationship:'案件關聯',quote_versions:'有效版本衝突',allocation:'收款分配',duplicate_invoice:'重複發票',duplicate_invoice_id:'發票識別碼重複',latest_quote:'最新報價待核對',resign:'改版待簽回',sale_date:'成交日期',won_evidence:'成交依據不足',invalid_value:'欄位值無法辨識',quote_reference:'報價未連結案件',case_reference:'發票未連結案件'};
 function Review({a,data,select}:{a:Analysis;data:Dataset;select:(id:string)=>void}){
@@ -221,7 +265,7 @@ function Review({a,data,select}:{a:Analysis;data:Dataset;select:(id:string)=>voi
  ];
  return <section className="panel"><PanelTitle title="需要確認的紀錄" sub={`${records.length} 項，依類別分組 · 在資料表補上處理結果並把核對狀態改為「已處理」`}/>
   {!records.length?<Empty title="目前沒有待核對項目" description="仍請留意來源涵蓋範圍，空白金額不代表零。"/>:<>
-  <div className="review-groups">{[['all',records.length] as const,...groups].map(([g,n])=><button key={g} className={cat===g?'active':''} aria-pressed={cat===g} onClick={()=>setCat(g)}><span>{g==='all'?'全部':g}</span><b>{n}</b></button>)}</div>
+  <KpiCards className="review-kpis" label="依類別篩選" value={cat} onChange={setCat} items={[{key:'all',label:'全部',value:records.length,unit:'項'},...groups.map(([g,n])=>({key:g,label:g,value:n,unit:'項'}))]}/>
   <DataTable rows={shown} columns={columns} rowKey={r=>r.id} onRowClick={r=>{if(byCase.has(r.caseId))select(r.caseId);}} fileName={`資料待核對${cat==='all'?'':'-'+cat}`}/></>}
  </section>;
 }
