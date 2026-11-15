@@ -10,6 +10,6 @@ export default defineConfig({
  publicDir:'../public',
  plugins:[react()],
  resolve:{alias:{'@':root}},
- build:{outDir:'../dist-pages',emptyOutDir:true},
+ build:{outDir:'../dist-pages',emptyOutDir:true,rollupOptions:{input:{index:fileURLToPath(new URL('pages/index.html',import.meta.url)),privacy:fileURLToPath(new URL('pages/privacy.html',import.meta.url))}}},
  server:{port:5181,strictPort:true},
 });
