@@ -18,7 +18,7 @@ function App(){
  // Restore a still-valid sign-in so a reload does not ask again.
  const [session,setSession]=useState<{token:string;email:string;expiresAt:number}|null>(()=>readSession());
  const needConsent=useRef(false);
- const [problem,setProblem]=useState<string|null>(config.googleClientId?null:'網站尚未設定 Google OAuth Client ID（pages/config.json）。');
+ const [problem,setProblem]=useState<string|null>(config.googleClientId?null:'網站尚未設定 Google OAuth Client ID（gh-pages/config.json）。');
  const client=useRef<any>(null);
  useEffect(()=>{
   if(!config.googleClientId)return;
@@ -50,7 +50,7 @@ function App(){
  },[session]);
  const account=useMemo<DashboardAccount|null>(()=>session?{email:session.email,spreadsheetUrl,onSignOut:signOut}:null,[session,signOut]);
  return <>
-  <Dashboard notice={config.googleClientId?problem:null} signInDisabledReason={config.googleClientId?null:'Google 登入尚未啟用：網站管理者需先建立 Google OAuth 用戶端 ID，並填入 pages/config.json。'} key={session?.email??'anon'} signedIn={!!session} loadData={session?loadData:undefined} onSignIn={signIn} signInLabel="使用 Google 帳號登入" account={account}/>
+  <Dashboard notice={config.googleClientId?problem:null} signInDisabledReason={config.googleClientId?null:'Google 登入尚未啟用：網站管理者需先建立 Google OAuth 用戶端 ID，並填入 gh-pages/config.json。'} key={session?.email??'anon'} signedIn={!!session} loadData={session?loadData:undefined} onSignIn={signIn} signInLabel="使用 Google 帳號登入" account={account}/>
  </>;
 }
 createRoot(document.getElementById('root')!).render(<StrictMode><App/></StrictMode>);

@@ -23,7 +23,7 @@ Implementation details, current validation, business rules and verification limi
 
 ## GitHub Pages 版本（Google 帳號登入）
 
-除了 ChatGPT Sites 版本，`pages/` 是同一套畫面與計算邏輯的靜態版本，部署在 GitHub Pages。沒有伺服器：訪客用自己的 Google 帳號登入，瀏覽器以唯讀權限直接讀取試算表。
+除了 ChatGPT Sites 版本，`gh-pages/` 是同一套畫面與計算邏輯的靜態版本，部署在 GitHub Pages。沒有伺服器：訪客用自己的 Google 帳號登入，瀏覽器以唯讀權限直接讀取試算表。
 
 **誰能看：試算表共用給誰，誰就看得到。** 網站用登入者自己的權限讀取，沒被共用的帳號 Google 不會回傳資料。要收回權限，在試算表共用設定移除該帳號即可。
 
@@ -31,7 +31,7 @@ Implementation details, current validation, business rules and verification limi
 1. 到 Google Cloud Console 建立（或選擇）專案，啟用 Google Sheets API。
 2. 設定 OAuth 同意畫面（External），然後在「目標對象」按「發布應用程式」改為正式版，就不必維護測試使用者名單。未送審的正式版最多 100 位使用者，登入時會出現「未經驗證」提示，按「進階 → 繼續」即可。
 3. 建立 OAuth 用戶端 ID，類型選「網頁應用程式」，已授權的 JavaScript 來源填 `https://<GitHub 帳號>.github.io`（本機測試另加 `http://localhost:5181`）。
-4. 把用戶端 ID 填入 `pages/config.json` 的 `googleClientId`，推送到 `main`，GitHub Actions 會自動重新部署。
+4. 把用戶端 ID 填入 `gh-pages/config.json` 的 `googleClientId`，推送到 `main`，GitHub Actions 會自動重新部署。
 
 用戶端 ID 不是密碼，可以放在公開 repo。
 
