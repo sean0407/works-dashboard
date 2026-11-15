@@ -303,3 +303,5 @@ td small{font-size:var(--fs-meta);color:var(--text-3)}
 .follow-strip strong{color:var(--text-strong);font-weight:550;margin-right:10px}
 .follow-strip .text-link{font-size:var(--fs-sm);white-space:nowrap}
 @media(max-width:760px){.follow-strip{flex-wrap:wrap;padding:12px 14px}.follow-strip p{flex-basis:calc(100% - 32px)}.follow-strip .text-link{margin-left:29px}}
+.legend-prev{font-style:normal;margin-left:14px;display:inline-flex;align-items:center;gap:6px}
+.legend-prev::before{content:"";width:18px;border-top:2px dashed #a9b5ae}
