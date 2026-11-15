@@ -9,6 +9,7 @@ import {CoverageSummary,DocumentCoveragePanel,type CoverageFilter} from './docum
 import {DataTable,type Column} from './data-table';
 type Analysis=ReturnType<typeof derive>;
 type ProjectFilter=CaseStage|'all'|'invoiced';
+type QuoteView='all'|'pending'|'latest';
 type Tab='overview'|'quotes'|'finance'|'subcontracts'|'projects'|'review'|'coverage';
 export type DashboardAccount={email:string;spreadsheetUrl:string;onSignOut:()=>void};
 const tabs:{key:Tab;label:string;en:string;icon:typeof LayoutDashboard}[]=[{key:'overview',label:'營運總覽',en:'OVERVIEW',icon:LayoutDashboard},{key:'quotes',label:'報價管理',en:'QUOTATIONS',icon:FileText},{key:'finance',label:'財務概況(待開發)',en:'FINANCE',icon:Wallet},{key:'subcontracts',label:'發包項目',en:'SUBCONTRACTS',icon:Handshake},{key:'projects',label:'案件進度',en:'PROJECTS',icon:FolderOpen},{key:'coverage',label:'文件完整性',en:'DOCUMENT COVERAGE',icon:Layers},{key:'review',label:'資料待核對',en:'RECONCILIATION',icon:ListChecks}];
@@ -131,6 +132,7 @@ function ProjectTable({a,data,select,stage,setStage}:{a:Analysis;data:Dataset;se
  <DataTable rows={rows} columns={columns} rowKey={c=>text(c.id)} onRowClick={c=>select(text(c.id))} fileName="案件進度" empty={stage==='all'?'沒有案件':'沒有符合的案件'}/></>;
 }
 function Quotes({data,a,period,select}:{data:Dataset;a:Analysis;period:any;select:(id:string)=>void}){
+ const [view,setView]=useState<QuoteView>('all');
  const ids=new Set(a.cases.map(c=>c.id));const quotes=data.quotes.filter(q=>ids.has(q.caseId)&&inPeriod(q.date,period));const latestIds=new Set(a.latestQuotes.flatMap(q=>q.quotes.map(v=>v.id)));const unresolvedIds=new Set(a.latestQuotes.filter(q=>!q.quote).flatMap(q=>q.caseIds));
  const byCase=new Map(a.cases.map(c=>[c.id,c]));
  const status=(q:typeof quotes[number])=>latestIds.has(q.id)?'最新報價（計入）':unresolvedIds.has(text(q.caseId))?'版本待核對':'舊版留存';
@@ -145,7 +147,15 @@ function Quotes({data,a,period,select}:{data:Dataset;a:Analysis;period:any;selec
   {key:'gross',label:'含稅',kind:'num',value:q=>money(q.gross),filter:'none'},
   {key:'source',label:'原始報價',value:q=>data.documents.find(d=>d.id===q.sourceId)?.url?'有':'未連結',filter:'select',render:q=><SourceLink url={data.documents.find(d=>d.id===q.sourceId)?.url}>開啟</SourceLink>},
  ];
- return <><div className="context-cards two"><div><span>期間內報價版本</span><strong>{quotes.length}<small> 份</small></strong><p>保留所有版本，不等於商機數</p></div><div><span>最新報價案件</span><strong>{a.metrics.quotedCount}<small> 案</small></strong><p>未稅 {a.metrics.quotedNet===null?`已知 ${fmt(a.metrics.knownQuotedNet)}，其餘待核對`:fmt(a.metrics.quotedNet)} · 同案號舊版不重複計入</p></div></div><section className="panel"><PanelTitle title="報價版本紀錄" sub="按報價日期篩選 · 點欄名排序，第二列可篩選 · 點選列檢視案件"/>{!quotes.length?<Empty/>:<DataTable rows={quotes} columns={columns} rowKey={q=>text(q.id)} onRowClick={q=>select(text(q.caseId))} fileName="報價版本紀錄"/>}</section></>;
+ const pending=quotes.filter(q=>status(q)==='版本待核對'),latest=quotes.filter(q=>status(q)==='最新報價（計入）');
+ const sumNet=(list:typeof quotes)=>{const known=list.map(q=>money(q.net)).filter((x):x is number=>x!=null);return known.length?known.reduce((t,x)=>t+x,0):null;};
+ const cards:{key:QuoteView;label:string;count:number;unit:string;note:string}[]=[
+  {key:'all',label:'總報價數',count:quotes.length,unit:'份',note:'期間內所有版本，含舊版'},
+  {key:'pending',label:'版本待核對',count:pending.length,unit:'份',note:`${new Set(pending.map(q=>text(q.caseId))).size} 案無法判定採用哪一版`},
+  {key:'latest',label:'最新報價',count:latest.length,unit:'份',note:`${new Set(latest.map(q=>text(q.caseId))).size} 案 · 未稅 NT$ ${fmt(sumNet(latest))}`},
+ ];
+ const shown=view==='pending'?pending:view==='latest'?latest:quotes;
+ return <><div className="stage-kpis three quote-kpis" role="group" aria-label="依統計版本篩選">{cards.map(k=><button key={k.key} className={view===k.key?'active':''} aria-pressed={view===k.key} onClick={()=>setView(k.key)}><span>{k.label}</span><strong>{k.count}<small> {k.unit}</small></strong><p>{k.note}</p></button>)}</div><section className="panel"><PanelTitle title="報價版本紀錄" sub="按報價日期篩選 · 點欄名排序，第二列可篩選 · 點選列檢視案件"/>{!quotes.length?<Empty/>:<DataTable rows={shown} columns={columns} rowKey={q=>text(q.id)} onRowClick={q=>select(text(q.caseId))} fileName="報價版本紀錄"/>}</section></>;
 }
 function Subcontracts({data,a,period,select}:{data:Dataset;a:Analysis;period:any;select:(id:string)=>void}){
  const v=subcontractView(data,a.cases,period);const t=v.totals;
@@ -174,7 +184,7 @@ function Subcontracts({data,a,period,select}:{data:Dataset;a:Analysis;period:any
   {key:'status',label:'狀態',value:r=>text(r.status)||'有效',filter:'select',render:r=><Badge tone={(text(r.status)||'有效')==='有效'?'green':'neutral'}>{text(r.status)||'有效'}</Badge>},
   {key:'source',label:'原件',value:r=>safeUrl(r.sourceUrl)?'有':'未連結',filter:'select',render:r=><SourceLink url={r.sourceUrl}>開啟</SourceLink>},
  ];
- return <><div className="context-cards"><div><span>發包成本（未稅）</span><strong><small>NT$ </small>{fmt(t.costNet)}</strong><p>{t.count} 筆有效單據{t.unknown?` · ${t.unknown} 筆金額待補`:''}</p></div><div><span>發包廠商</span><strong>{t.vendors}<small> 家</small></strong><p>涉及 {t.cases} 個案件{t.unlinked?` · ${t.unlinked} 筆未連結案件`:''}</p></div><div><span>計算方式</span><strong className="small-strong">只計「有效」</strong><p>同一筆已有發票時，報價標「參考」；重複檔標「重複」，都不重複計成本。</p></div></div>
+ return <><div className="context-cards"><div><span>總發包金額（未稅）</span><strong><small>NT$ </small>{fmt(t.costNet)}</strong><p>{t.count} 筆有效單據{t.unknown?` · ${t.unknown} 筆金額待補`:''} · 涉及 {t.cases} 案</p></div><div><span>已開票（未稅）</span><strong><small>NT$ </small>{fmt(t.invoicedNet)}</strong><p>{t.invoicedCount} 張廠商發票 · 尚未開票 NT$ {fmt(t.costNet-t.invoicedNet)}（報價、請款單）</p></div><div><span>廠商數</span><strong>{t.vendors}<small> 家</small></strong><p>{t.unlinked?`${t.unlinked} 筆未連結案件 · `:''}只計狀態「有效」；已有發票的報價標「參考」、重複檔標「重複」，不重複計成本</p></div></div>
  <section className="panel"><PanelTitle title="各案發包與毛利" sub="開票未稅 − 發包未稅 · 發包金額有缺時毛利顯示待確認"/>{!v.perCase.length?<Empty title="此期間沒有發包紀錄" description="在試算表「發包項目」分頁新增廠商報價或發票後，重新整理即可看到。"/>:<DataTable rows={v.perCase} columns={caseCols} rowKey={c=>c.caseId} onRowClick={c=>select(c.caseId)} fileName="各案發包與毛利"/>}</section>
  <section className="panel"><PanelTitle title="發包單據明細" sub="廠商報價、發票與請款單 · 依文件日期篩選期間"/>{!v.rows.length?<Empty title="此期間沒有發包單據"/>:<DataTable rows={v.rows} columns={cols} rowKey={r=>text(r.id)} onRowClick={r=>{if(r.caseId)select(text(r.caseId));}} fileName="發包單據明細"/>}</section></>;
 }

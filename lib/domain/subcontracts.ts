@@ -20,9 +20,10 @@ export function subcontractView(data:Dataset,cases:DerivedCase[],period:Period){
   return {caseId,number:text(c?.number)||text(rows[0].caseNumber),title:text(c?.title),revenueNet,costNet,costUnknown,margin,marginRate:margin!==null&&revenueNet?margin/revenueNet*100:null,vendors:[...new Set(rows.map(r=>text(r.vendor)).filter(Boolean))]};
  }).sort((a,b)=>b.costNet-a.costNet);
  const nets=counted.map(r=>money(r.net));
+ const billed=counted.filter(r=>text(r.kind)==='發票');const billedNets=billed.map(r=>money(r.net));
  return {
   rows:all,
   perCase,
-  totals:{costNet:nets.reduce<number>((s,v)=>s+(v??0),0),unknown:nets.filter(v=>v===null).length,count:counted.length,vendors:new Set(counted.map(r=>text(r.vendor)).filter(Boolean)).size,cases:byCase.size,unlinked:counted.filter(r=>!r.caseId).length},
+  totals:{costNet:nets.reduce<number>((s,v)=>s+(v??0),0),unknown:nets.filter(v=>v===null).length,count:counted.length,vendors:new Set(counted.map(r=>text(r.vendor)).filter(Boolean)).size,cases:byCase.size,invoicedNet:billedNets.reduce<number>((s,v)=>s+(v??0),0),invoicedCount:billed.length,unlinked:counted.filter(r=>!r.caseId).length},
  };
 }

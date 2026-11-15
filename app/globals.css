@@ -263,3 +263,6 @@ td small{font-size:var(--fs-meta);color:var(--text-3)}
 @media(min-width:1400px){.stage-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
 @media(max-width:760px){.stage-grid{grid-template-columns:minmax(0,1fr)}}
 @media(max-width:760px){.filter-bar .period-control:not(:has(input)){grid-template-columns:auto minmax(0,1fr)}}
+.stage-kpis.three{grid-template-columns:repeat(3,minmax(0,1fr))}
+.quote-kpis{padding:0;margin:0 0 23px}
+@media(max-width:760px){.stage-kpis.three{grid-template-columns:minmax(0,1fr)}.quote-kpis{padding:0}}

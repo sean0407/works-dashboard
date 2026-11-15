@@ -23,6 +23,7 @@ test('only 有效 rows count as cost; margins need known costs',()=>{
  assert.equal(v.totals.count,3);
  assert.equal(v.totals.costNet,70000);
  assert.equal(v.totals.unknown,1);
+ assert.equal(v.totals.invoicedNet,70000);assert.equal(v.totals.invoicedCount,2);
  const c1=v.perCase.find(x=>x.caseId==='c1');
  assert.equal(c1.costNet,30000);assert.equal(c1.revenueNet,100000);assert.equal(c1.margin,70000);assert.equal(c1.marginRate,70);
  const c2=v.perCase.find(x=>x.caseId==='c2');
