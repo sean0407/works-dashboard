@@ -7,7 +7,7 @@ import schema from '../lib/domain/schema.json' with {type:'json'};
 // Load both Apps Script files into one context, as they share one project.
 const ctx=vm.createContext({});
 for(const f of ['document-import.gs','quote-signing.gs'])vm.runInContext(readFileSync(new URL(`../apps-script/${f}`,import.meta.url),'utf8'),ctx);
-const {SIGN_HEADERS,CASE_SIGN_HEADERS,QUOTE_SIGN_HEADERS,addWorkingDays,isoDay,isEmail,planSendQueue,findSignatureByTokenHash,pageStateFor,planSignedCase,buildSignEmail,escapeHtml}=ctx;
+const {SIGN_HEADERS,CASE_SIGN_HEADERS,QUOTE_SIGN_HEADERS,addWorkingDays,isoDay,isEmail,planSendQueue,findSignatureByTokenHash,pageStateFor,planSignedCase,buildSignEmail,escapeHtml,previousSendFor,planEffectiveQuotes}=ctx;
 
 const signHeaders=Object.values(SIGN_HEADERS);
 const sig=(o)=>{const r=signHeaders.map(()=>'');for(const[k,v]of Object.entries(o))r[signHeaders.indexOf(SIGN_HEADERS[k])]=v;return r;};
@@ -117,4 +117,63 @@ test('signing e-mail carries the link, amount and due date, and escapes HTML',()
  assert.match(m.html,/A288 &lt;Logitech&gt;/);
  assert.ok(!m.html.includes('<Logitech>'));
  assert.equal(escapeHtml(`"'&`),'&quot;&#39;&amp;');
+});
+
+const quoteHeaders=Object.values(schema.collections.quotes.columns);
+const quote=(o)=>{const r=quoteHeaders.map(()=>'');for(const[k,v]of Object.entries(o))r[quoteHeaders.indexOf(QUOTE_SIGN_HEADERS[k])]=v;return r;};
+const changes=(c)=>[...c.map(x=>[x.index,x.value])];
+
+test('revision before signing: V2 queued voids the open V1 link and the e-mail says it replaces V1',()=>{
+ const rows=[
+  sig({id:'sig_v1',caseId:'case_A288',status:'已檢視',sentAt:'2026-11-17',dueDate:'2026-12-01'}),
+  queued('sig_v2','case_A288'),
+ ];
+ const plan=planSendQueue(signHeaders,rows,'2026-11-19');
+ assert.deepEqual([...plan.send],[1]);
+ assert.deepEqual([...plan.void.map(v=>[v.index,v.by])],[[0,'sig_v2']]);
+ const prev=previousSendFor(signHeaders,rows,1);
+ assert.equal(prev.id,'sig_v1');
+ assert.equal(prev.sentDay,'2026-11-17');
+ const m=buildSignEmail({title:'A288 V2',gross:3000000,link:'L',due:'2026-12-03',replaces:prev.sentDay});
+ assert.match(m.subject,/報價單更新版簽署/);
+ assert.match(m.text,/取代 2026-11-17 寄出的版本，先前的確認連結已失效/);
+ assert.equal(previousSendFor(signHeaders,[queued('sig_only','case_A300')],0),null,'first send is not an update');
+});
+
+test('revision after signing: the new version becomes effective and the old one is switched off',()=>{
+ const quotes=[
+  quote({id:'quo_v1',caseId:'case_A288',version:'V1',role:'原案',effective:'是'}),
+  quote({id:'quo_v2',caseId:'case_A288',version:'V2',role:'原案',effective:'否'}),
+  quote({id:'quo_other',caseId:'case_A200',effective:'是'}),
+ ];
+ assert.deepEqual(changes(planEffectiveQuotes(quoteHeaders,quotes,'case_A288','quo_v2')),[[0,'否'],[1,'是']]);
+ const row=caseRow({id:'case_A288',status:'已成交',signedSourceId:'doc_v1signed',decisionDate:'11/20/2026'});
+ const plan=planSignedCase(caseHeaders,row,'2026-12-05','doc_v2signed');
+ assert.equal(plan.revision,true);
+ assert.deepEqual({...plan.set},{revisionSignedDate:'2026-12-05',revisionSignedSourceId:'doc_v2signed'});
+});
+
+test('complementary quotes and other quote groups stay effective',()=>{
+ const quotes=[
+  quote({id:'quo_a',caseId:'case_A276',groupId:'g1',role:'互補',effective:'是'}),
+  quote({id:'quo_b',caseId:'case_A276',groupId:'g1',role:'互補',effective:'否'}),
+  quote({id:'quo_c',caseId:'case_A276',groupId:'g2',role:'原案',effective:'是'}),
+ ];
+ assert.deepEqual(changes(planEffectiveQuotes(quoteHeaders,quotes,'case_A276','quo_b')),[[1,'是']]);
+ assert.deepEqual(changes(planEffectiveQuotes(quoteHeaders,quotes,'case_A276','quo_missing')),[]);
+});
+
+test('an add-on is its own case: queuing it leaves the signed original alone',()=>{
+ const rows=[
+  sig({id:'sig_main',caseId:'case_A288',status:'已簽回',sentAt:'2026-11-17'}),
+  sig({id:'sig_v1open',caseId:'case_A288',status:'已寄送',sentAt:'2026-11-18',dueDate:'2026-12-02'}),
+  queued('sig_add','case_A288-addition'),
+ ];
+ const plan=planSendQueue(signHeaders,rows,'2026-11-20');
+ assert.deepEqual([...plan.send],[2]);
+ assert.deepEqual([...plan.void],[]);
+ assert.equal(previousSendFor(signHeaders,rows,2),null);
+ const first=planSignedCase(caseHeaders,caseRow({id:'case_A288-addition',status:'已報價待確認'}),'2026-11-25','doc_add');
+ assert.equal(first.revision,false);
+ assert.equal(first.set.status,'已成交');
 });

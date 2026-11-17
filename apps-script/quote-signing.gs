@@ -2,7 +2,7 @@
  * 沃克思｜報價單寄送與簽回（第 1 期）。
  *
  * 和 document-import.gs 放在同一個 Apps Script 專案（新增一個指令碼檔案，貼上本檔全部內容）。
- * 必須由寄信的帳號（老闆的 Gmail）安裝觸發器與部署網頁應用程式，信才會從該信箱寄出。
+ * 必須由寄信的帳號安裝觸發器與部署網頁應用程式，信才會從該信箱寄出（目前為試算表擁有者 mamba20230501）。
  * 安裝步驟見 QUOTE-SIGNING-zh-TW.md。
  *
  * 分工（避免兩邊同時寫入互相覆蓋）：
@@ -10,6 +10,11 @@
  * - 本程式負責「待寄送」之後的所有狀態，以及簽回時寫入案件的欄位。
  *
  * 狀態：草稿 → 待寄送 → 已寄送 → 已檢視 → 已簽回／已拒絕／已過期；任何未完成的狀態都可能變成已作廢。
+ *
+ * 報價調整：
+ * - 寄出後、簽回前改版：Claude 登記同案件的新版本；新版寄出時舊連結自動作廢，信件標明「更新版」。
+ * - 簽回後改版：同案件新版本；簽回時填最新改版簽回日，新版成為有效成交版本，舊版改為否。
+ * - 簽回後追加：另開追加案件（原案ID 指向原案件），獨立寄送與簽回，不影響原案件。
  */
 
 var SIGN_SHEET = '簽署';
@@ -35,7 +40,8 @@ var CASE_SIGN_HEADERS = {
   revisionSignedSourceId: '最新改版簽回文件ID', reviewNotes: '待核對事項'
 };
 var QUOTE_SIGN_HEADERS = {
-  id: '報價ID', caseId: '案件ID', date: '報價日', title: '報價名稱', gross: '含稅金額', effective: '有效成交版本'
+  id: '報價ID', caseId: '案件ID', date: '報價日', title: '報價名稱', version: '版本', role: '原案互補追加',
+  groupId: '報價組ID', gross: '含稅金額', effective: '有效成交版本'
 };
 var COMPANY_NAME = '沃克思國際有限公司';
 
@@ -118,6 +124,49 @@ function planSendQueue(headers, rows, today) {
   return plan;
 }
 
+/**
+ * The most recent earlier send for the same case (any status past 待寄送), or null.
+ * Used to tell the client that a new e-mail replaces an earlier quote.
+ */
+function previousSendFor(headers, rows, index) {
+  var col = headerIndex(headers, SIGN_HEADERS, SIGN_SHEET);
+  var caseId = String(rows[index][col.caseId]).trim();
+  if (!caseId) return null;
+  var best = null;
+  rows.forEach(function (row, i) {
+    if (i === index || String(row[col.caseId]).trim() !== caseId) return;
+    var status = String(row[col.status]).trim();
+    if (status === SIGN_STATUS.queued || status === SIGN_STATUS.draft || !row[col.sentAt]) return;
+    var sent = isoDay(row[col.sentAt]);
+    if (!best || sent > best.sentDay) best = { id: String(row[col.id]).trim(), sentDay: sent, status: status };
+  });
+  return best;
+}
+
+/**
+ * 有效成交版本 after a quote is signed: the signed quote becomes 是, and any other 是 quote of the same
+ * case and the same 報價組ID becomes 否 (a revision replaces it). 互補 quotes are left alone because a
+ * complementary bundle is meant to have several effective quotes.
+ * Returns [{index, value}] for rows that change.
+ */
+function planEffectiveQuotes(headers, rows, caseId, quoteId) {
+  var col = headerIndex(headers, QUOTE_SIGN_HEADERS, '報價版本');
+  var signed = -1;
+  rows.forEach(function (r, i) { if (String(r[col.id]).trim() === quoteId) signed = i; });
+  if (signed < 0) return [];
+  var group = String(rows[signed][col.groupId] || '').trim();
+  var changes = [];
+  rows.forEach(function (r, i) {
+    var yesNow = r[col.effective] === true || String(r[col.effective]).trim() === '是';
+    if (i === signed) { if (!yesNow) changes.push({ index: i, value: '是' }); return; }
+    if (String(r[col.caseId]).trim() !== caseId || !yesNow) return;
+    if (String(r[col.groupId] || '').trim() !== group) return;
+    if (String(r[col.role]).trim() === '互補') return;
+    changes.push({ index: i, value: '否' });
+  });
+  return changes;
+}
+
 /** Index of the 簽署 row whose token hash matches, or -1. */
 function findSignatureByTokenHash(headers, rows, tokenHash) {
   if (!tokenHash) return -1;
@@ -186,18 +235,21 @@ function formatTwd(value) {
 
 /** Subject, plain text and HTML of the e-mail that carries the signing link. */
 function buildSignEmail(info) {
-  var subject = '【' + COMPANY_NAME + '】報價單簽署：' + info.title;
+  var subject = '【' + COMPANY_NAME + '】報價單' + (info.replaces ? '更新版' : '') + '簽署：' + info.title;
   var greet = info.recipientName ? info.recipientName + ' 您好：' : '您好：';
   var amount = formatTwd(info.gross);
+  var replaces = info.replaces ? '這份報價取代 ' + info.replaces + ' 寄出的版本，先前的確認連結已失效。' : '';
   var text = [
     greet, '',
     '附件是「' + info.title + '」報價單' + (amount ? '（含稅總計 ' + amount + '）' : '') + '。',
+  ].concat(replaces ? [replaces] : []).concat([
     '請點以下連結確認報價內容：', info.link, '',
     '連結有效期限至 ' + info.due + '。如有任何問題，直接回覆這封信即可。', '',
     COMPANY_NAME
-  ].join('\n');
+  ]).join('\n');
   var html = '<p>' + escapeHtml(greet) + '</p>' +
     '<p>附件是「' + escapeHtml(info.title) + '」報價單' + (amount ? '（含稅總計 ' + escapeHtml(amount) + '）' : '') + '。</p>' +
+    (replaces ? '<p><b>' + escapeHtml(replaces) + '</b></p>' : '') +
     '<p><a href="' + escapeHtml(info.link) + '" style="display:inline-block;padding:10px 18px;background:#e8743b;color:#fff;border-radius:6px;text-decoration:none">開啟報價單簽署頁</a></p>' +
     '<p style="color:#666">連結有效期限至 ' + escapeHtml(info.due) + '。如有任何問題，直接回覆這封信即可。</p>' +
     '<p>' + COMPANY_NAME + '</p>';
@@ -349,7 +401,8 @@ function processSendQueue() {
         if (!quote) throw new Error('「報價版本」找不到報價 ' + row[col.quoteId]);
         var token = newToken_();
         var due = addWorkingDays(today, SIGN_VALID_WORKDAYS);
-        var mail = buildSignEmail({ title: quote.title, gross: quote.gross, recipientName: row[col.recipientName], link: url + '?t=' + token, due: due });
+        var prev = previousSendFor(table.headers, table.rows, i);
+        var mail = buildSignEmail({ title: quote.title, gross: quote.gross, recipientName: row[col.recipientName], link: url + '?t=' + token, due: due, replaces: prev ? prev.sentDay : '' });
         var options = { htmlBody: mail.html, attachments: [blob.setName(quote.title + '.pdf')], name: COMPANY_NAME };
         if (String(row[col.cc] || '').trim()) options.cc = String(row[col.cc]).trim();
         GmailApp.sendEmail(String(row[col.recipientEmail]).trim(), mail.subject, mail.text, options);
@@ -502,9 +555,14 @@ function applySignedToCase_(ss, caseId, quoteId, day, docId) {
     var prev = String(data[r][col.reviewNotes] || '').trim();
     sheet.getRange(r + 1, col.reviewNotes + 1).setValue((prev ? prev + '；' : '') + '線上簽回 ' + day + '：' + plan.conflicts.join('；'));
   }
-  var quote = quoteInfo_(ss, quoteId);
-  if (quote && !plan.revision) ss.getSheetByName('報價版本').getRange(quote.row, quote.col.effective + 1).setValue('是');
-  return plan.revision ? '案件已有原簽回，已填最新改版簽回欄位。' : '已寫入案件簽回文件ID與成交決策日。' +
+  var qSheet = ss.getSheetByName('報價版本');
+  var qData = qSheet.getDataRange().getValues();
+  var qCol = headerIndex(qData[0], QUOTE_SIGN_HEADERS, '報價版本');
+  var effective = planEffectiveQuotes(qData[0], qData.slice(1), caseId, quoteId);
+  effective.forEach(function (c) { qSheet.getRange(c.index + 2, qCol.effective + 1).setValue(c.value); });
+  var replaced = effective.filter(function (c) { return c.value === '否'; }).length;
+  return (plan.revision ? '案件已有原簽回，已填最新改版簽回欄位，原成交決策日不變。' : '已寫入案件簽回文件ID與成交決策日。') +
+    (replaced ? '新版設為有效成交版本，' + replaced + ' 份舊版改為否。' : '') +
     (plan.conflicts.length ? '有 ' + plan.conflicts.length + ' 項與既有資料不同，已記在待核對事項。' : '');
 }
 
