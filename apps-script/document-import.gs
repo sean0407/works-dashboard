@@ -327,14 +327,16 @@ function digestBody(digest, today) {
 // ---------- Apps Script runtime ----------
 
 function onOpen() {
-  SpreadsheetApp.getUi().createMenu('沃克思')
+  var menu = SpreadsheetApp.getUi().createMenu('沃克思')
     .addItem('匯入新文件', 'importDocuments')
     .addItem('安裝每小時自動匯入', 'installHourlyImport')
     .addSeparator()
     .addItem('讀出新文件的金額', 'extractRecords')
     .addItem('立即寄出今日摘要', 'sendDailyDigest')
-    .addItem('安裝每日摘要信（早上 8 點）', 'installDailyDigest')
-    .addToUi();
+    .addItem('安裝每日摘要信（早上 8 點）', 'installDailyDigest');
+  // quote-signing.gs adds its items when it is installed in the same project.
+  if (typeof addSigningMenu_ === 'function') menu = addSigningMenu_(menu);
+  menu.addToUi();
 }
 
 function installHourlyImport() {
