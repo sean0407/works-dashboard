@@ -7,7 +7,7 @@ import schema from '../lib/domain/schema.json' with {type:'json'};
 // Load both Apps Script files into one context, as they share one project.
 const ctx=vm.createContext({});
 for(const f of ['document-import.gs','quote-signing.gs'])vm.runInContext(readFileSync(new URL(`../apps-script/${f}`,import.meta.url),'utf8'),ctx);
-const {SIGN_HEADERS,CASE_SIGN_HEADERS,QUOTE_SIGN_HEADERS,addWorkingDays,isoDay,isEmail,planSendQueue,findSignatureByTokenHash,pageStateFor,planSignedCase,buildSignEmail,escapeHtml,previousSendFor,planEffectiveQuotes}=ctx;
+const {SIGN_HEADERS,CASE_SIGN_HEADERS,QUOTE_SIGN_HEADERS,addWorkingDays,isoDay,isEmail,planSendQueue,findSignatureByTokenHash,pageStateFor,planSignedCase,buildSignEmail,escapeHtml,previousSendFor,planEffectiveQuotes,voidsForCase,sendFailureNote,clearSendFailureNote,signBlockReason,validateSignature,buildCertificateHtml,signedDocumentRow,planSuperseded,quoteGroupKeys,signPageHtml_}=ctx;
 
 const signHeaders=Object.values(SIGN_HEADERS);
 const sig=(o)=>{const r=signHeaders.map(()=>'');for(const[k,v]of Object.entries(o))r[signHeaders.indexOf(SIGN_HEADERS[k])]=v;return r;};
@@ -176,4 +176,117 @@ test('an add-on is its own case: queuing it leaves the signed original alone',()
  const first=planSignedCase(caseHeaders,caseRow({id:'case_A288-addition',status:'已報價待確認'}),'2026-11-25','doc_add');
  assert.equal(first.revision,false);
  assert.equal(first.set.status,'已成交');
+});
+
+test('an older link is voided only for the case whose new quote was actually sent',()=>{
+ const rows=[
+  sig({id:'sig_a1',caseId:'case_A',status:'已寄送',dueDate:'2026-12-01'}),
+  sig({id:'sig_b1',caseId:'case_B',status:'已檢視',dueDate:'2026-12-01'}),
+  queued('sig_a2','case_A'),
+  queued('sig_b2','case_B'),
+ ];
+ const plan=planSendQueue(signHeaders,rows,'2026-11-17');
+ // case_A's new quote went out, case_B's failed: only case_A's old link may be voided.
+ assert.deepEqual([...voidsForCase(plan,'case_A').map(v=>v.index)],[0]);
+ assert.deepEqual([...voidsForCase(plan,'case_C')],[]);
+ assert.deepEqual([...voidsForCase(plan,'')],[]);
+});
+
+test('a row left in 寄送中 is reported as interrupted and never re-sent',()=>{
+ const rows=[sig({id:'sig_x',quoteId:'quo_x',caseId:'case_A',sourceId:'doc_x',recipientEmail:'buyer@example.com',status:'寄送中'}),sig({id:'sig_old',caseId:'case_A',status:'已寄送',dueDate:'2026-12-01'})];
+ const plan=planSendQueue(signHeaders,rows,'2026-11-17');
+ assert.deepEqual([...plan.send],[]);
+ assert.deepEqual([...plan.interrupted],[0]);
+ assert.deepEqual([...plan.void],[]);
+ assert.equal(pageStateFor('寄送中','2026-12-01','2026-11-17'),'invalid');
+ assert.equal(pageStateFor('寄送失敗','2026-12-01','2026-11-17'),'invalid');
+});
+
+test('send failures count up, keep the existing note and give up at the limit',()=>{
+ const a=sendFailureNote('老闆備註','Drive 逾時',3);
+ assert.equal(a.notes,'老闆備註 ｜寄送失敗 1/3：Drive 逾時');
+ assert.equal(a.giveUp,false);
+ const b=sendFailureNote(a.notes,'Drive 逾時',3);
+ assert.equal(b.notes,'老闆備註 ｜寄送失敗 2/3：Drive 逾時');
+ const c=sendFailureNote(b.notes,'PDF 不符',3);
+ assert.equal(c.attempts,3);
+ assert.equal(c.giveUp,true);
+ assert.equal(c.notes,'老闆備註 ｜寄送失敗 3/3：PDF 不符');
+ assert.equal(sendFailureNote('','x',3).notes,'寄送失敗 1/3：x');
+ assert.equal(clearSendFailureNote(c.notes),'老闆備註');
+ assert.equal(clearSendFailureNote('老闆備註'),'老闆備註');
+});
+
+test('only a quote that reached the client can be marked signed',()=>{
+ for(const s of ['已寄送','已檢視','已過期'])assert.equal(signBlockReason(s),'',s);
+ for(const s of ['草稿','待寄送','寄送中','寄送失敗','已拒絕',''])assert.match(signBlockReason(s),/尚未寄達/,s);
+ assert.match(signBlockReason('已作廢'),/最新版本/);
+});
+
+const png='data:image/png;base64,'+'A'.repeat(400);
+test('a signature needs a name, a drawn PNG and consent',()=>{
+ assert.match(validateSignature({name:'',image:png,consent:true}).error,/姓名/);
+ assert.match(validateSignature({name:'王小明',image:png}).error,/同意/);
+ assert.match(validateSignature({name:'王小明',image:'data:image/png;base64,AAAA',consent:true}).error,/簽名/);
+ assert.match(validateSignature({name:'王小明',image:'data:text/html;base64,'+'A'.repeat(400),consent:true}).error,/簽名/);
+ assert.match(validateSignature({name:'王小明',image:'data:image/png;base64,'+'A'.repeat(600001),consent:true}).error,/過大/);
+ const ok=validateSignature({name:' 王小明 ',title:'採購經理',image:png,consent:true,agent:'x'.repeat(500)});
+ assert.equal(ok.name,'王小明');
+ assert.equal(ok.imageBase64.length,400);
+ assert.equal(ok.agent.length,300);
+});
+
+test('certificate shows the signer and the file hash, and escapes what the client typed',()=>{
+ const html=buildCertificateHtml({title:'A288 報價單',date:'2026-11-18',gross:3427289,name:'<b>王</b>',signerTitle:'經理',signedAt:'2026-11-18 10:00:00',recipientEmail:'buyer@example.com',signId:'sig_1',filename:'A288.pdf',sha256:'ab'.repeat(32),agent:'UA',imageBase64:'QUJD'});
+ assert.ok(html.includes('&lt;b&gt;王&lt;/b&gt;'));
+ assert.ok(!html.includes('<b>王</b>'));
+ assert.ok(html.includes('ab'.repeat(32)));
+ assert.ok(html.includes('NT$ 3,427,289'));
+ assert.ok(html.includes('data:image/png;base64,QUJD'));
+});
+
+test('the certificate is registered in 文件 in the dashboard column order',()=>{
+ const docHeaders=Object.values(schema.collections.documents.columns);
+ const row=signedDocumentRow(docHeaders,{id:'doc_abc',filename:'A288-簽回證明.pdf',url:'https://drive.google.com/file/d/abcdefghijk/view',sha256:'ff',caseNumber:'A288'});
+ assert.equal(row.length,docHeaders.length);
+ assert.deepEqual([...row],['doc_abc','簽回','A288-簽回證明.pdf','https://drive.google.com/file/d/abcdefghijk/view','ff','A288','','','已處理']);
+});
+
+test('signing page shows the signature form only while the link is open',()=>{
+ const token='a'.repeat(64);
+ const open=signPageHtml_({state:'open',title:'A288 <報價>',date:'2026-11-18',gross:100,due:'2026-12-02'},token);
+ assert.ok(open.includes('<canvas id="pad">'));
+ assert.ok(open.includes('submitSignature'));
+ assert.ok(open.includes('A288 &lt;報價&gt;'));
+ for(const state of ['signed','voided','expired','declined','invalid']){
+  const html=signPageHtml_({state},token);
+  assert.ok(!html.includes('<canvas'),state);
+  assert.ok(!html.includes(token),state);
+ }
+});
+
+const quoteHeaders2=Object.values(schema.collections.quotes.columns);
+const quo=(o)=>{const r=quoteHeaders2.map(()=>'');for(const[k,v]of Object.entries(o))r[quoteHeaders2.indexOf(QUOTE_SIGN_HEADERS[k])]=v;return r;};
+test('a later link replaces the open one of the same quote group, not complementary quotes or other groups',()=>{
+ const keys=quoteGroupKeys(quoteHeaders2,[
+  quo({id:'quo_v1',caseId:'case_A',groupId:'g1'}),quo({id:'quo_v2',caseId:'case_A',groupId:'g1'}),
+  quo({id:'quo_other',caseId:'case_A',groupId:'g2'}),
+  quo({id:'quo_c1',caseId:'case_B',groupId:'g3',role:'互補'}),quo({id:'quo_c2',caseId:'case_B',groupId:'g3',role:'互補'}),
+ ]);
+ const at=(d)=>new Date(2026,10,d);
+ const rows=[
+  sig({id:'sig_v1',quoteId:'quo_v1',caseId:'case_A',status:'已檢視',sentAt:at(10)}),
+  sig({id:'sig_v2',quoteId:'quo_v2',caseId:'case_A',status:'已寄送',sentAt:at(15)}),
+  sig({id:'sig_other',quoteId:'quo_other',caseId:'case_A',status:'已寄送',sentAt:at(11)}),
+  sig({id:'sig_c1',quoteId:'quo_c1',caseId:'case_B',status:'已寄送',sentAt:at(10)}),
+  sig({id:'sig_c2',quoteId:'quo_c2',caseId:'case_B',status:'已寄送',sentAt:at(12)}),
+  sig({id:'sig_draft',quoteId:'quo_v2',caseId:'case_A',status:'待寄送'}),
+ ];
+ assert.deepEqual([...planSuperseded(signHeaders,rows,keys).map(v=>[v.index,v.by])],[[0,'sig_v2']]);
+ // A signed newer version also closes the older open link; a signed older one is left as the record it is.
+ rows[1]=sig({id:'sig_v2',quoteId:'quo_v2',caseId:'case_A',status:'已簽回',sentAt:at(15)});
+ assert.deepEqual([...planSuperseded(signHeaders,rows,keys).map(v=>v.index)],[0]);
+ rows[0]=sig({id:'sig_v1',quoteId:'quo_v1',caseId:'case_A',status:'已簽回',sentAt:at(10)});
+ rows[1]=sig({id:'sig_v2',quoteId:'quo_v2',caseId:'case_A',status:'已寄送',sentAt:at(15)});
+ assert.deepEqual([...planSuperseded(signHeaders,rows,keys)],[]);
 });
