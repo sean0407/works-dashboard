@@ -65,3 +65,13 @@ test('invoice tax and total are found when the total label is separated from its
  const f=extractInvoice(text,'A903 ZZ00000009 示範(全款發票).pdf');
  assert.equal(f.net,20000);assert.equal(f.tax,1000);assert.equal(f.gross,21000);assert.equal(f.number,'ZZ00000009');
 });
+
+test('a quote labelled 發票稅 with decimals is read, and an unreadable quote with a case number still gets a row',()=>{
+ const alt=extractQuote('專案編號 A902 合計(未稅，含服務費) $50,000.0 發票稅 $2,499.6 總計(含服務費) $52,500 2026 年 11月 18日/示範製表','A902 示範-報價單.pdf');
+ assert.equal(alt.net,50000);assert.equal(alt.tax,2500);assert.equal(alt.gross,52500);assert.equal(alt.date,'2026-11-18');
+ const qh=Object.values(schema.collections.quotes.columns),at=(row,name)=>row[qh.indexOf(name)];
+ const docs=[{docId:'doc_dddd',kind:'報價單',filename:'A903 掃描-報價單.pdf',fields:extractQuote('掃描檔沒有文字','A903 掃描-報價單.pdf')},{docId:'doc_eeee',kind:'報價單',filename:'沒有案號.pdf',fields:extractQuote('','沒有案號.pdf')},{docId:'doc_ffff',kind:'發票',filename:'A903 空白.pdf',fields:extractInvoice('','A903 空白.pdf')}];
+ const rows=planRecordRows('報價單',qh,[],docs,{A903:'case_A903'});
+ assert.equal(rows.length,1);assert.equal(at(rows[0],'案件ID'),'case_A903');assert.equal(at(rows[0],'來源文件ID'),'doc_dddd');assert.equal(at(rows[0],'未稅金額'),'');assert.match(at(rows[0],'備註'),/讀不出金額/);
+ assert.equal(planRecordRows('發票',Object.values(schema.collections.invoices.columns),[],docs,{}).length,0);
+});
