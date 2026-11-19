@@ -143,6 +143,8 @@ function folderIdFrom(value) {
 
 var QUOTE_SHEET = '報價版本', INVOICE_SHEET = '發票', CASE_SHEET = '案件商機';
 var EXTRACT_NOTE = '自動匯入：金額由 PDF 文字讀出，請對照原件後再採用';
+var EXTRACT_NOTE_UNREAD = '自動匯入：讀不出金額，請對照原件填入';
+var EXTRACT_MAX_TRIES = 3; // a file that cannot be read is tried on three hourly runs, then left for a person
 var EXTRACT_INVOICE_STATUS = '待核對';
 var EXTRACT_LIMIT = 15;
 var DASHBOARD_URL = 'https://sean0407.github.io/works-dashboard/';
@@ -168,6 +170,11 @@ function extractQuote(text, filename) {
   var net = amountFrom(/合計\s*\(未稅[^)]*\)\s*([\d,]+)/.exec(t));
   var taxMatch = /營業稅\s*\(\d+(?:\.\d+)?%\)\s*([\d,]+)(?:\s*([\d,]+))?/.exec(t);
   var tax = amountFrom(taxMatch);
+  if (tax === null) {
+    // Some quotes label the tax 發票稅 and show decimals (1,700.6): round to the dollar.
+    var altTax = /發票稅\s*([\d,]+(?:\.\d+)?)/.exec(t), altValue = altTax ? Math.round(Number(altTax[1].replace(/,/g, ''))) : 0;
+    if (altValue > 0) tax = altValue;
+  }
   var gross = taxMatch && taxMatch[2] ? amountFrom([null, taxMatch[2]]) : null;
   if (net === null) {
     // Google's PDF conversion lists the five labels first and the five amounts after them.
@@ -242,13 +249,16 @@ function planRecordRows(kind, headers, rows, docs, caseIds) {
     var f = d.fields;
     if (d.kind !== kind || seen[d.docId]) return;
     if (kind === '發票' && (!f.number || numbers[f.number])) return;
-    if (f.net === null && f.gross === null) return;
+    // A quote whose amounts could not be read still gets its row when the file name carries a case number, so it shows up
+    // in the lists and someone fills the amounts in; without a number there is nothing to file it under.
+    var unread = f.net === null && f.gross === null;
+    if (unread && (kind !== '報價單' || !f.caseNumber)) return;
     var row = head.map(function () { return ''; });
     var set = function (name, value) { var i = col(name); if (i >= 0 && value !== null && value !== undefined && value !== '') row[i] = value; };
     var suffix = d.docId.replace(/^doc_/, '');
     set('案件ID', caseIds[f.caseNumber] || '');
     set('來源文件ID', d.docId);
-    set('備註', EXTRACT_NOTE + (caseIds[f.caseNumber] ? '' : '；找不到案號 ' + (f.caseNumber || '（檔名無案號）') + '，請補案件ID'));
+    set('備註', (unread ? EXTRACT_NOTE_UNREAD : EXTRACT_NOTE) + (caseIds[f.caseNumber] ? '' : '；找不到案號 ' + (f.caseNumber || '（檔名無案號）') + '，請補案件ID'));
     if (kind === '報價單') {
       set('報價ID', 'quo_' + suffix); set('報價日', f.date); set('報價名稱', d.filename.replace(/\.[A-Za-z0-9]+$/, ''));
       set('版本', f.version); set('原案互補追加', f.addition ? '追加' : '');
@@ -363,7 +373,8 @@ function importDocuments() {
     if (plan.append.length) sheet.getRange(sheet.getLastRow() + 1, 1, plan.append.length, headers.length).setValues(plan.append);
     ss.toast('新增 ' + plan.append.length + ' 列、補上連結 ' + plan.update.length + ' 列' + (plan.duplicates ? '、略過重複檔案 ' + plan.duplicates + ' 個' : '') + '。', '沃克思文件匯入', 8);
     console.log('importDocuments: append=' + plan.append.length + ' update=' + plan.update.length + ' duplicates=' + plan.duplicates + ' skipped=' + plan.skipped);
-    if (plan.append.length) extractRecords_(ss);
+    // Every run, not only when new files arrived: a file whose text could not be read last hour gets another try.
+    extractRecords_(ss);
   } finally {
     lock.releaseLock();
   }
@@ -436,7 +447,9 @@ function extractRecords_(ss) {
     var i = values[0].map(function (h) { return String(h).trim(); }).indexOf('來源文件ID');
     values.slice(1).forEach(function (r) { if (r[i]) referenced[String(r[i]).trim()] = true; });
   });
-  var docs = [], failed = 0, firstBySha = {};
+  var docs = [], failed = 0, firstBySha = {}, attempted = [];
+  var props = PropertiesService.getScriptProperties(), tries = {};
+  try { tries = JSON.parse(props.getProperty('extract_tries') || '{}') || {}; } catch (e) { tries = {}; }
   for (var r = 1; r < docValues.length && docs.length < EXTRACT_LIMIT; r++) {
     var row = docValues[r], kind = String(row[col.kind] || '').trim(), docId = String(row[col.id] || '').trim();
     // A duplicate copy of an already registered file must not create a second quote or invoice row.
@@ -445,6 +458,8 @@ function extractRecords_(ss) {
     if ((kind !== '報價單' && kind !== '發票') || !docId || referenced[docId]) continue;
     if (String(row[col.reviewStatus] || '').trim() !== AUTO_STATUS || String(row[col.reviewNotes] || '').indexOf(AUTO_NOTE) !== 0) continue;
     var fileId = driveFileIdFromUrl(row[col.url]); if (!fileId) continue;
+    if ((tries[docId] || 0) >= EXTRACT_MAX_TRIES) continue;
+    attempted.push(docId);
     var name = String(row[col.filename] || '');
     try {
       var text = pdfText_(fileId);
@@ -460,7 +475,12 @@ function extractRecords_(ss) {
     });
     if (rows.length) spec[1].getRange(spec[1].getLastRow() + 1, 1, rows.length, spec[2][0].length).setValues(rows);
     added += rows.length;
+    var sourceAt = spec[2][0].map(function (h) { return String(h).trim(); }).indexOf('來源文件ID');
+    rows.forEach(function (row) { referenced[String(row[sourceAt] || '').trim()] = true; });
   });
+  // Count a try for every file read this run that still has no row; forget the ones that now have one.
+  attempted.forEach(function (id) { if (referenced[id]) delete tries[id]; else tries[id] = (tries[id] || 0) + 1; });
+  props.setProperty('extract_tries', JSON.stringify(tries));
   ss.toast('讀出並新增 ' + added + ' 列報價／發票（均標記待核對）' + (failed ? '；' + failed + ' 份讀取失敗' : '') + '。', '沃克思', 8);
   console.log('extractRecords: candidates=' + docs.length + ' added=' + added + ' failed=' + failed);
 }
