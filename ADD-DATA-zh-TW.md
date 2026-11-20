@@ -7,12 +7,11 @@ Google 試算表是唯一的資料來源，報價單、發票的 PDF 原件放�
 ### 1. 讓本機資料夾自動同步到雲端
 1. 安裝 [Google 雲端硬碟電腦版](https://www.google.com/drive/download/)，用你自己的 Google 帳號登入。
 2. 原件分成兩個雲端資料夾：
-   - 報價單：https://drive.google.com/drive/folders/1NLSl-o7ga47UaI8d86zdleJ8RUAtDVoD
-   - 發票：https://drive.google.com/drive/folders/1e3FxLVymjCwRgFJo7DH4VNgbq1o70Zep
+   - 報價單、發票各一個資料夾；實際連結填在試算表「設定」分頁的 `quotes_folder_id`、`invoices_folder_id`（公開 repo 不放真實連結）。
    - 如果資料夾是別人共用給你的：在資料夾上按右鍵 →「整理」→「新增捷徑」→ 放到「我的雲端硬碟」，電腦版才看得到。
 3. 打開 Finder 裡的「Google Drive」，報價單 PDF 放進報價單資料夾、發票放進發票資料夾。底下可以再分年度等子資料夾。
    - 類型由資料夾決定：放在報價單資料夾的一律登記為「報價單」，發票資料夾的一律為「發票」。
-   - 檔名開頭寫案號（例如 `A301 春季活動-報價單.pdf`），系統就能自動填「原案號」；也會參考上一層資料夾名稱。
+   - 檔名開頭寫案號（例如 `A791 春季活動-報價單.pdf`），系統就能自動填「原案號」；也會參考上一層資料夾名稱。
 
 之後在電腦上存檔到這兩個資料夾，就會自動上傳，不用手動上傳。
 

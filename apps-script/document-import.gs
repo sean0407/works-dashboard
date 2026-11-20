@@ -30,6 +30,41 @@ var MAX_DEPTH = 8;
 
 // ---------- Pure logic (tested in tests/document-import.test.mjs) ----------
 
+/**
+ * Text that starts with = + - or @ is kept as text when written to a cell. Without this, a file name or a name typed on
+ * the public signing page such as =IMAGE("https://…"&A1) would become a formula in the owner's spreadsheet.
+ */
+function sheetSafe(value) {
+  return typeof value === 'string' && /^[=+\-@]/.test(value) ? "'" + value : value;
+}
+function sheetSafeRow(row) { return row.map(sheetSafe); }
+
+/** Header names from `names` that row 1 lacks; writing without them would scatter or duplicate rows. */
+function missingHeaders(headers, names) {
+  var have = headers.map(function (h) { return String(h).trim(); });
+  return names.filter(function (n) { return have.indexOf(n) < 0; });
+}
+
+/**
+ * Who may run something that sends mail, installs triggers or writes the sheet. The signing page is a public web app in
+ * this same project, and such a page can call any function whose name does not end in "_".
+ * Allowed: an installed trigger of this project (its event carries the trigger's id, checked against the real list), or
+ * a signed-in person (menu, editor's Run button). A visitor of the public page has neither.
+ */
+function adminAllowed(event, triggerIds, activeEmail) {
+  if (event && event.triggerUid && triggerIds.indexOf(String(event.triggerUid)) >= 0) return true;
+  return !!String(activeEmail || '').trim();
+}
+function requireAdmin_(event) {
+  var ids = ScriptApp.getProjectTriggers().map(function (t) { return String(t.getUniqueId()); });
+  var email = '';
+  try { email = Session.getActiveUser().getEmail(); } catch (e) { email = ''; }
+  if (!adminAllowed(event, ids, email)) {
+    console.log('requireAdmin_: refused a call without a signed-in user or a known trigger');
+    throw new Error('這個動作只能從試算表選單或排程執行。');
+  }
+}
+
 /** 報價單 / 發票 / 其他, judged from the file name and its folder name. */
 function guessKind(name, folderName) {
   var text = String(name || '') + ' ' + String(folderName || '');
@@ -38,7 +73,7 @@ function guessKind(name, folderName) {
   return '其他';
 }
 
-/** First standalone case number like A280 in the file name, else in the folder name. */
+/** First standalone case number like A780 in the file name, else in the folder name. */
 function guessCaseNumber(name, folderName) {
   var pattern = /(?:^|[^A-Za-z0-9])(A\d{3})(?!\d)/;
   var m = pattern.exec(String(name || '')) || pattern.exec(String(folderName || ''));
@@ -130,6 +165,23 @@ function planChanges(headers, rows, files, hash) {
     result.append.push(row);
   });
   return result;
+}
+
+/**
+ * Try counts worth keeping: files still listed in 文件 that have no quote or invoice row yet. At most `max` entries
+ * (a script property holds about 9 KB); beyond that the files that already used up their tries are dropped first.
+ */
+function pruneTries(tries, referenced, presentIds, max) {
+  max = max || 250;
+  var present = {};
+  presentIds.forEach(function (id) { present[id] = true; });
+  var ids = Object.keys(tries).filter(function (id) { return !referenced[id] && present[id]; });
+  var spent = ids.filter(function (id) { return tries[id] >= EXTRACT_MAX_TRIES; });
+  var drop = {};
+  spent.slice(0, Math.max(0, ids.length - max)).forEach(function (id) { drop[id] = true; });
+  var out = {};
+  ids.forEach(function (id) { if (!drop[id]) out[id] = tries[id]; });
+  return out;
 }
 
 /** Bare folder ID, or the ID inside a Drive folder URL. */
@@ -350,12 +402,14 @@ function onOpen() {
 }
 
 function installHourlyImport() {
+  requireAdmin_();
   var exists = ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === 'importDocuments'; });
   if (!exists) ScriptApp.newTrigger('importDocuments').timeBased().everyHours(1).create();
   SpreadsheetApp.getActive().toast(exists ? '每小時自動匯入早已安裝。' : '已安裝：每小時會自動匯入一次。', '沃克思', 6);
 }
 
-function importDocuments() {
+function importDocuments(e) {
+  requireAdmin_(e);
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(30000)) return;
   try {
@@ -369,8 +423,8 @@ function importDocuments() {
     var files = [];
     folders.forEach(function (f) { collectFiles_(DriveApp.getFolderById(f.id), '', files, 0, f.kind); });
     var plan = planChanges(headers, rows, files, function (f) { return sha256Hex_(f.blob()); });
-    plan.update.forEach(function (u) { sheet.getRange(u.row, 1, 1, headers.length).setValues([u.values.slice(0, headers.length)]); });
-    if (plan.append.length) sheet.getRange(sheet.getLastRow() + 1, 1, plan.append.length, headers.length).setValues(plan.append);
+    plan.update.forEach(function (u) { sheet.getRange(u.row, 1, 1, headers.length).setValues([sheetSafeRow(u.values.slice(0, headers.length))]); });
+    if (plan.append.length) sheet.getRange(sheet.getLastRow() + 1, 1, plan.append.length, headers.length).setValues(plan.append.map(sheetSafeRow));
     ss.toast('新增 ' + plan.append.length + ' 列、補上連結 ' + plan.update.length + ' 列' + (plan.duplicates ? '、略過重複檔案 ' + plan.duplicates + ' 個' : '') + '。', '沃克思文件匯入', 8);
     console.log('importDocuments: append=' + plan.append.length + ' update=' + plan.update.length + ' duplicates=' + plan.duplicates + ' skipped=' + plan.skipped);
     // Every run, not only when new files arrived: a file whose text could not be read last hour gets another try.
@@ -429,7 +483,8 @@ function sha256Hex_(blob) {
 
 // ---------- 讀出金額並新增報價／發票列 ----------
 
-function extractRecords() {
+function extractRecords(e) {
+  requireAdmin_(e);
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(30000)) return;
   try { extractRecords_(SpreadsheetApp.getActive()); } finally { lock.releaseLock(); }
@@ -442,6 +497,11 @@ function extractRecords_(ss) {
   if (!docSheet || !quoteSheet || !invoiceSheet || !caseSheet) throw new Error('找不到文件、報價版本、發票或案件商機分頁。');
   var docValues = docSheet.getDataRange().getValues(), col = columnIndex(docValues[0]);
   var quoteValues = quoteSheet.getDataRange().getValues(), invoiceValues = invoiceSheet.getDataRange().getValues();
+  // Without these columns a new row cannot be recognised next hour and would be added again every run.
+  var missing = missingHeaders(docValues[0], [HEADERS.id, HEADERS.kind, HEADERS.url, HEADERS.reviewStatus, HEADERS.reviewNotes]).map(function (h) { return DOC_SHEET + '：' + h; })
+    .concat(missingHeaders(quoteValues[0], ['報價ID', '案件ID', '來源文件ID']).map(function (h) { return QUOTE_SHEET + '：' + h; }))
+    .concat(missingHeaders(invoiceValues[0], ['發票ID', '發票號碼', '來源文件ID']).map(function (h) { return INVOICE_SHEET + '：' + h; }));
+  if (missing.length) throw new Error('找不到必要欄位，未讀取也未新增任何列：' + missing.join('、'));
   var referenced = {};
   [quoteValues, invoiceValues].forEach(function (values) {
     var i = values[0].map(function (h) { return String(h).trim(); }).indexOf('來源文件ID');
@@ -450,7 +510,8 @@ function extractRecords_(ss) {
   var docs = [], failed = 0, firstBySha = {}, attempted = [];
   var props = PropertiesService.getScriptProperties(), tries = {};
   try { tries = JSON.parse(props.getProperty('extract_tries') || '{}') || {}; } catch (e) { tries = {}; }
-  for (var r = 1; r < docValues.length && docs.length < EXTRACT_LIMIT; r++) {
+  // The limit counts files tried, not files read: a run of unreadable scans must not turn into hundreds of OCR calls.
+  for (var r = 1; r < docValues.length && attempted.length < EXTRACT_LIMIT; r++) {
     var row = docValues[r], kind = String(row[col.kind] || '').trim(), docId = String(row[col.id] || '').trim();
     // A duplicate copy of an already registered file must not create a second quote or invoice row.
     var sha = String(row[col.sha256] || '').trim();
@@ -460,6 +521,9 @@ function extractRecords_(ss) {
     var fileId = driveFileIdFromUrl(row[col.url]); if (!fileId) continue;
     if ((tries[docId] || 0) >= EXTRACT_MAX_TRIES) continue;
     attempted.push(docId);
+    // Saved before the read: if the run is cut off by the time limit, the try still counts.
+    tries[docId] = (tries[docId] || 0) + 1;
+    props.setProperty('extract_tries', JSON.stringify(tries));
     var name = String(row[col.filename] || '');
     try {
       var text = pdfText_(fileId);
@@ -473,14 +537,13 @@ function extractRecords_(ss) {
       // Date columns must be real dates so the dashboard can read them.
       return row.map(function (value) { return /^\d{4}-\d{2}-\d{2}$/.test(String(value)) ? new Date(Number(value.slice(0, 4)), Number(value.slice(5, 7)) - 1, Number(value.slice(8, 10))) : value; });
     });
-    if (rows.length) spec[1].getRange(spec[1].getLastRow() + 1, 1, rows.length, spec[2][0].length).setValues(rows);
+    if (rows.length) spec[1].getRange(spec[1].getLastRow() + 1, 1, rows.length, spec[2][0].length).setValues(rows.map(sheetSafeRow));
     added += rows.length;
     var sourceAt = spec[2][0].map(function (h) { return String(h).trim(); }).indexOf('來源文件ID');
     rows.forEach(function (row) { referenced[String(row[sourceAt] || '').trim()] = true; });
   });
-  // Count a try for every file read this run that still has no row; forget the ones that now have one.
-  attempted.forEach(function (id) { if (referenced[id]) delete tries[id]; else tries[id] = (tries[id] || 0) + 1; });
-  props.setProperty('extract_tries', JSON.stringify(tries));
+  // Forget files that now have a row or are gone from 文件, so the stored list does not grow without end.
+  props.setProperty('extract_tries', JSON.stringify(pruneTries(tries, referenced, docValues.slice(1).map(function (r) { return String(r[col.id] || '').trim(); }))));
   ss.toast('讀出並新增 ' + added + ' 列報價／發票（均標記待核對）' + (failed ? '；' + failed + ' 份讀取失敗' : '') + '。', '沃克思', 8);
   console.log('extractRecords: candidates=' + docs.length + ' added=' + added + ' failed=' + failed);
 }
@@ -505,13 +568,15 @@ function pdfText_(fileId) {
 // ---------- 每日摘要信 ----------
 
 function installDailyDigest() {
+  requireAdmin_();
   var exists = ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === 'sendDailyDigest'; });
   if (!exists) ScriptApp.newTrigger('sendDailyDigest').timeBased().everyDays(1).atHour(8).create();
   SpreadsheetApp.getActive().toast(exists ? '每日摘要信早已安裝。' : '已安裝：每天早上 8 點左右寄出摘要信。', '沃克思', 6);
 }
 
 /** Recipient: 設定 `digest_email`, otherwise the account that installed the script. */
-function sendDailyDigest() {
+function sendDailyDigest(e) {
+  requireAdmin_(e);
   var ss = SpreadsheetApp.getActive();
   var today = Utilities.formatDate(new Date(), 'Asia/Taipei', 'yyyy-MM-dd');
   var digest = buildDigest(ss.getSheetByName(CASE_SHEET).getDataRange().getValues(), ss.getSheetByName(INVOICE_SHEET).getDataRange().getValues(), today);
@@ -526,6 +591,7 @@ function sendDailyDigest() {
 
 /** 檢查用：讀最新一份報價單與發票 PDF，把讀到的欄位寫進執行記錄，不會改動試算表。 */
 function debugExtract() {
+  requireAdmin_();
   var values = SpreadsheetApp.getActive().getSheetByName(DOC_SHEET).getDataRange().getValues(), col = columnIndex(values[0]);
   ['報價單', '發票'].forEach(function (kind) {
     for (var r = values.length - 1; r >= 1; r--) {
@@ -543,6 +609,7 @@ function debugExtract() {
 
 /** 檢查用：把今天的摘要內容寫進執行記錄，不寄信、不改動試算表。 */
 function debugDigest() {
+  requireAdmin_();
   var ss = SpreadsheetApp.getActive();
   var today = Utilities.formatDate(new Date(), 'Asia/Taipei', 'yyyy-MM-dd');
   var digest = buildDigest(ss.getSheetByName(CASE_SHEET).getDataRange().getValues(), ss.getSheetByName(INVOICE_SHEET).getDataRange().getValues(), today);

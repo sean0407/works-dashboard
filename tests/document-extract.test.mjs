@@ -75,3 +75,36 @@ test('a quote labelled 發票稅 with decimals is read, and an unreadable quote 
  assert.equal(rows.length,1);assert.equal(at(rows[0],'案件ID'),'case_A903');assert.equal(at(rows[0],'來源文件ID'),'doc_dddd');assert.equal(at(rows[0],'未稅金額'),'');assert.match(at(rows[0],'備註'),/讀不出金額/);
  assert.equal(planRecordRows('發票',Object.values(schema.collections.invoices.columns),[],docs,{}).length,0);
 });
+
+// A small stand-in for the Apps Script services, enough to run extractRecords_ end to end.
+function fakeBook(sheets){
+ const written={};
+ const sheet=name=>({getDataRange:()=>({getValues:()=>sheets[name]}),getLastRow:()=>sheets[name].length,
+  getRange:(row,col,n,w)=>({setValues:v=>{(written[name]??=[]).push(...v);sheets[name].push(...v);}})});
+ return {written,ss:{getSheetByName:n=>sheets[n]?sheet(n):null,toast:()=>{}}};
+}
+function runExtract(sheets,readText,startTries={}){
+ const c=vm.createContext({console:{log(){}}});
+ vm.runInContext(readFileSync(new URL('../apps-script/document-import.gs',import.meta.url),'utf8'),c);
+ const props={extract_tries:JSON.stringify(startTries)};const saves=[];
+ c.PropertiesService={getScriptProperties:()=>({getProperty:k=>props[k]??null,setProperty:(k,v)=>{props[k]=v;saves.push(v);}})};
+ c.Drive={};let reads=0;c.pdfText_=id=>{reads++;return readText(id);};
+ const book=fakeBook(sheets);c.extractRecords_(book.ss);
+ return {reads,saves,tries:JSON.parse(props.extract_tries),written:book.written};
+}
+const docHeaders=['文件ID','文件類型','原始檔名','文件連結','SHA256','原案號','待核對事項','核對狀態'];
+const pendingDoc=i=>[`doc_${i}`,'報價單',`示範${i}.pdf`,`https://drive.google.com/file/d/file${String(i).padStart(10,'0')}/view`,`sha${i}`,'','自動匯入：請確認文件類型與原案號','待核對'];
+const books=n=>({'文件':[docHeaders,...Array.from({length:n},(_,i)=>pendingDoc(i))],'報價版本':[schema.collections.quotes.columns?Object.values(schema.collections.quotes.columns):[]],'發票':[Object.values(schema.collections.invoices.columns)],'案件商機':[Object.values(schema.collections.cases.columns)]});
+
+test('a run of unreadable scans stops after 15 tries and each try is saved before the read',()=>{
+ const r=runExtract(books(20),()=>{throw new Error('OCR failed');});
+ assert.equal(r.reads,15);
+ assert.equal(Object.keys(r.tries).length,15);
+ assert.ok(r.saves.length>=15,'saved once per try, so a time-out cannot lose the count');
+ assert.equal(r.written['報價版本'],undefined);
+});
+
+test('the importer writes nothing when 來源文件ID is missing from 報價版本',()=>{
+ const b=books(2);b['報價版本'][0]=b['報價版本'][0].map(h=>h==='來源文件ID'?'來源文件':h);
+ assert.throws(()=>runExtract(b,()=>'A901 報價'),/來源文件ID/);
+});
