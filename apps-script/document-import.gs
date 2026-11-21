@@ -49,17 +49,21 @@ function missingHeaders(headers, names) {
  * Who may run something that sends mail, installs triggers or writes the sheet. The signing page is a public web app in
  * this same project, and such a page can call any function whose name does not end in "_".
  * Allowed: an installed trigger of this project (its event carries the trigger's id, checked against the real list), or
- * a signed-in person (menu, editor's Run button). A visitor of the public page has neither.
+ * a signed-in person running the script as themselves (menu, editor's Run button): there the active and the effective
+ * user are the same person. The public page runs as the owner, so a visitor whom Google identifies (same domain) is
+ * active but not effective, and an anonymous visitor has no active e-mail at all.
  */
-function adminAllowed(event, triggerIds, activeEmail) {
+function adminAllowed(event, triggerIds, activeEmail, effectiveEmail) {
   if (event && event.triggerUid && triggerIds.indexOf(String(event.triggerUid)) >= 0) return true;
-  return !!String(activeEmail || '').trim();
+  var active = String(activeEmail || '').trim().toLowerCase();
+  return !!active && active === String(effectiveEmail || '').trim().toLowerCase();
 }
 function requireAdmin_(event) {
   var ids = ScriptApp.getProjectTriggers().map(function (t) { return String(t.getUniqueId()); });
-  var email = '';
+  var email = '', effective = '';
   try { email = Session.getActiveUser().getEmail(); } catch (e) { email = ''; }
-  if (!adminAllowed(event, ids, email)) {
+  try { effective = Session.getEffectiveUser().getEmail(); } catch (e) { effective = ''; }
+  if (!adminAllowed(event, ids, email, effective)) {
     console.log('requireAdmin_: refused a call without a signed-in user or a known trigger');
     throw new Error('這個動作只能從試算表選單或排程執行。');
   }
