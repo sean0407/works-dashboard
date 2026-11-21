@@ -4,9 +4,9 @@ export type Dataset = Record<string, Row[]>;
 export type Period = { start: string | null; end: string | null };
 export type Filters = { period: Period; today: string; clientId?: string; brand?: string; status?: string; search?: string; activity?: Period };
 export type Issue = { type: string; caseId?: string; description: string };
-export type DerivedCase = Row & { won: boolean; lost: boolean; closed: boolean; saleDate: string | null; saleNet: number | null; historical: boolean; certified: boolean; unverifiedWon: boolean; stage: CaseStage; stageFlag: string | null; invoicedGross: number | null; paymentTypes: string; derivedStatus: string };
+export type DerivedCase = Row & { won: boolean; lost: boolean; closed: boolean; saleDate: string | null; saleNet: number | null; historical: boolean; certified: boolean; unverifiedWon: boolean; stage: CaseStage; stageFlag: string | null; invoicedGross: number | null; invoicedNet: number | null; paymentTypes: string; derivedStatus: string };
 export type DerivedInvoice = Row & {balance:number|null;paid:number|null;overdue:boolean};
-const INVOICE_STATUSES=['有效','作廢'];
+const INVOICE_STATUSES=['有效','作廢','待核對'];
 const CASE_STATUSES=['需求接洽','準備報價','已報價待確認','已成交','未成交','取消','待核對'];
 const CASE_MODES=['歷史','新案'];
 /** Operational progress shown on the case views; 未成交 is a separate terminal state. */
@@ -68,14 +68,19 @@ export function applyRefresh(previous: any, response: any): any {
   if (ACCESS_LOST.includes(response.status)) return {error:response};
   return {...previous,stale:!!previous.data,error:response};
 }
-/** Rows the Apps Script importer added (備註 starts with 自動匯入) that still have no 報價日. */
-export const isPendingImport=(q:Row)=>text(q.notes).trim().startsWith('自動匯入')&&!parseDate(q.date);
+/** Rows the Apps Script importer added (備註 starts with 自動匯入). They stay out of the KPIs until a person checks the
+ * PDF and removes 「自動匯入」 from the note, dated or not: a misread amount must never reach the overview. */
+export const isPendingImport=(q:Row)=>text(q.notes).trim().startsWith('自動匯入');
 /** Select before filtering by period: an obsolete quote never returns as current. */
 const complementaryBundle=(quotes:Row[])=>quotes.length>1&&new Set(quotes.map(q=>q.caseId)).size===1&&!!text(quotes[0].groupId)&&!!parseDate(quotes[0].date)&&new Set(quotes.map(q=>q.groupId)).size===1&&new Set(quotes.map(q=>q.version)).size===1&&new Set(quotes.map(q=>parseDate(q.date))).size===1&&quotes.every(q=>q.role==='互補'&&yes(q.effective))&&new Set(quotes.map(q=>q.id)).size===quotes.length;
-export function selectLatestQuotes(quotes: Row[], issues: Issue[],caseNumbers=new Map<string,string>()) {
+export function selectLatestQuotes(quotes: Row[], issues: Issue[],caseNumbers=new Map<string,string>(),additionIds=new Set<string>()) {
   const groups=new Map<string,Row[]>();
-  for(const q of quotes){const id=caseNumbers.get(text(q.caseId))||`internal:${text(q.caseId)}`;const group=groups.get(id)??[];group.push(q);groups.set(id,group);}
-  return [...groups].map(([number,versions])=>{
+  // Independent cases sharing a number still compete (the latest one wins). An addition case (原案ID filled) shares its
+  // parent's 原案號 but is extra work, not a newer version, so its quotes form their own group.
+  const keys=new Map<string,string>();
+  for(const q of quotes){const cid=text(q.caseId),num=caseNumbers.get(cid);const key=!num?`internal:${cid}`:additionIds.has(cid)?`${num}\u0000${cid}`:num;keys.set(key,num||`internal:${cid}`);const group=groups.get(key)??[];group.push(q);groups.set(key,group);}
+  return [...groups].map(([key,versions])=>{
+    const number=keys.get(key)!;
     const dated=versions.map(q=>({q,date:parseDate(q.date)}));
     const missingDate=dated.some(v=>!v.date);
     const date=missingDate?null:dated.map(v=>v.date!).sort().at(-1)!;
@@ -113,7 +118,9 @@ export function derive(data: Dataset, filters: Filters) {
     });
   };
   // Invoice identity problems are reported once per row by the identity check below.
-  const allInvoices = unique(rows('invoices'),'number','duplicate_invoice',false);
+  // A voided row and its valid twin can share a number: keep the valid one whatever the row order.
+  const allInvoices = unique([...rows('invoices')].sort((x,y)=>Number(y.status==='有效')-Number(x.status==='有效')),'number','duplicate_invoice',false);
+  for(const invoice of rows('invoices'))if(text(invoice.status)==='待核對')issues.push({type:'import_review',caseId:text(invoice.caseId),description:`發票 ${text(invoice.number)||text(invoice.id)} 由 PDF 自動匯入，狀態為待核對，未計入開票；對照原件無誤後把發票狀態改為「有效」。`});
   for(const invoice of allInvoices)if(!INVOICE_STATUSES.includes(text(invoice.status)))issues.push({type:'invalid_value',caseId:text(invoice.caseId),description:`發票 ${text(invoice.number)||text(invoice.id)} 的發票狀態「${text(invoice.status)||'空白'}」無法辨識（應為有效或作廢），未計入開票金額。`});
   const validInvoices = allInvoices.filter(r=>r.status==='有效');
   const sourceCases = unique(rows('cases'),'id','duplicate_case');
@@ -169,7 +176,7 @@ export function derive(data: Dataset, filters: Filters) {
     const lost=!won && ['未成交','取消'].includes(text(c.status));
     const saleDate=won ? historical ? dates[0]??null : parseDate(c.decisionDate) : parseDate(c.decisionDate);
     const caseQuotes=quotesByCase.get(c.id)??[];
-    const effective=caseQuotes.filter(q=>yes(q.effective));
+    const effective=caseQuotes.filter(q=>yes(q.effective)&&!isPendingImport(q));
     const latestQuoteDate=effective.map(q=>parseDate(q.date)).filter((d):d is string=>!!d).sort().at(-1);
     const revisionDate=parseDate(c.revisionSignedDate);
     const revisionDocument=!!c.revisionSignedSourceId&&c.revisionSignedSourceId!==c.signedSourceId&&documentIds.has(c.revisionSignedSourceId);
@@ -199,9 +206,11 @@ export function derive(data: Dataset, filters: Filters) {
     const stage:CaseStage=lost?'未成交':text(c.closureStatus)==='已結案'?'結案':invoices.length?'開票':(won||unverifiedWon)?'成交':hasQuote?'報價':'提案';
     const stageFlag=unverifiedWon&&stage==='成交'?'成交依據待核對':null;
     const invoicedGross=invoices.length?sumKnown(invoices.map(i=>money(i.gross))):null;
+    // Valid-invoice net whatever the signing evidence says; null when a net is missing (shown as 待補).
+    const invoicedNet=invoices.length?completeSum(invoices.map(i=>money(i.net))):null;
     // 全款／訂金／尾款／追加 from the case's valid invoices, in billing order.
     const paymentTypes=PAYMENT_ORDER.filter(t=>invoices.some(i=>text(i.type).includes(t))).join('＋');
-    return {...c,won,lost,closed,stage,stageFlag,invoicedGross,paymentTypes,saleDate,saleNet:won?saleNet:null,historical,certified,unverifiedWon,derivedStatus:won?'已成交':lost?'未成交':unverifiedWon?'待核對':text(c.status)||'待核對'};
+    return {...c,won,lost,closed,stage,stageFlag,invoicedGross,invoicedNet,paymentTypes,saleDate,saleNet:won?saleNet:null,historical,certified,unverifiedWon,derivedStatus:won?'已成交':lost?'未成交':unverifiedWon?'待核對':text(c.status)||'待核對'};
   });
   const caseDimensions=caseList.filter(c=>{
     if(filters.brand&&c.brand!==filters.brand)return false;
@@ -222,9 +231,11 @@ export function derive(data: Dataset, filters: Filters) {
   const caseNumbers=new Map(sourceCases.map(c=>[text(c.id),text(c.number).trim()]));
   // A scanned quote the importer could not date must not unseat a dated version of the same case; it waits for a person.
   const importPending=rows('quotes').filter(q=>caseNumbers.has(text(q.caseId))&&isPendingImport(q));
-  for(const q of importPending)issues.push({type:'import_review',caseId:text(q.caseId),description:`報價「${text(q.title)||text(q.id)}」由 PDF 自動匯入但沒有報價日，暫不參與最新版本判定；請對照原件補上報價日與金額。`});
+  for(const q of importPending)issues.push({type:'import_review',caseId:text(q.caseId),description:`報價「${text(q.title)||text(q.id)}」由 PDF 自動匯入，暫不計入報價統計；請對照原件核對${parseDate(q.date)?'':'並補上報價日'}金額，無誤後把備註開頭的「自動匯入」刪掉。`});
   const pendingImportIds=new Set(importPending.map(q=>text(q.id)));const pendingRows=new Set(importPending);
-  const latestQuotes=selectLatestQuotes(rows('quotes').filter(q=>caseNumbers.has(text(q.caseId))&&!pendingRows.has(q)),issues,caseNumbers).filter(q=>q.caseIds.some(id=>ids.has(id)));
+  const additionIds=new Set(sourceCases.filter(c=>text(c.parentId)&&caseNumbers.has(text(c.parentId))).map(c=>text(c.id)));
+  for(const c of sourceCases)if(text(c.parentId)&&!caseNumbers.has(text(c.parentId)))issues.push({type:'relationship',caseId:text(c.id),description:`${text(c.number)} 的原案ID「${text(c.parentId)}」找不到對應案件，暫視為獨立案件。`});
+  const latestQuotes=selectLatestQuotes(rows('quotes').filter(q=>caseNumbers.has(text(q.caseId))&&!pendingRows.has(q)),issues,caseNumbers,additionIds).filter(q=>q.caseIds.some(id=>ids.has(id)));
   const quoted=latestQuotes.filter(q=>inPeriod(q.date,period));
   const openCaseIds=new Set(cases.filter(c=>!c.won&&!c.lost&&!c.unverifiedWon).map(c=>text(c.id)));
   const pendingQuoted=quoted.filter(q=>q.caseIds.some(id=>openCaseIds.has(id)));

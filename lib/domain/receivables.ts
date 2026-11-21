@@ -30,6 +30,6 @@ export function receivableView(invoices:DerivedInvoice[],today:string){
  return {rows,open,overdue,collected,totals:{
   receivable:sum(open,r=>r.receivable),openCount:open.length,unknown:open.filter(r=>r.receivable===null).length,
   overdue:sum(overdue,r=>r.receivable),overdueCount:overdue.length,overdueUnknown:overdue.filter(r=>r.receivable===null).length,
-  collected:sum(collected,r=>money(r.gross)),collectedCount:collected.length,
+  collected:sum(collected,r=>money(r.gross)),collectedCount:collected.length,collectedUnknown:collected.filter(r=>money(r.gross)===null).length,
  }};
 }

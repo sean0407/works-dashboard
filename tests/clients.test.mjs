@@ -28,3 +28,16 @@ test('a sheet that only says 已成交 does not count as won, and a missing net 
  assert.equal(k1.originals,3);assert.equal(k1.won,1);assert.equal(k1.acFee,null);
  assert.equal(k1.total,0);assert.equal(k1.unknown,1);
 });
+
+test('a missing invoice amount keeps the client active this year and makes the average 待補',()=>{
+ const cases=[{id:'a',clientId:'k1',parentId:null,stage:'開票',invoicedGross:1},{id:'b',clientId:'k1',parentId:null,stage:'開票',invoicedGross:1}];
+ const v=clientView([{id:'k1',name:'示範'}],cases,[{caseId:'a',date:'2025-03-01',net:100000},{caseId:'b',date:'2026-02-01',net:null}],[],'2026-11-16');
+ const [r]=v.rows;
+ assert.equal(r.activeThisYear,true);assert.equal(r.average,null);assert.equal(r.unknown,1);assert.equal(v.totals.unknown,1);
+ assert.equal(v.totals.active,1);
+});
+
+test('each year column reports its missing invoice amounts',()=>{
+ const v=clientView([{id:'k1',name:'示範'}],[{id:'b',clientId:'k1',parentId:null,stage:'開票'}],[{caseId:'b',date:'2026-02-01',net:null}],[],'2026-11-16');
+ assert.deepEqual(v.rows[0].yearUnknown,{2026:1});assert.equal(v.rows[0].byYear['2026'],0);
+});

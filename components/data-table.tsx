@@ -51,7 +51,7 @@ export function DataTable<T>({rows,columns,rowKey,onRowClick,fileName,pageSize=5
       <input aria-label={`篩選${c.label}`} placeholder="篩選" value={filters[c.key]??''} onChange={e=>setFilters(f=>({...f,[c.key]:e.target.value}))}/>}
     </th>)}</tr>
    </thead>
-   <tbody>{view.slice(current*pageSize,(current+1)*pageSize).map(r=><tr key={rowKey(r)} onClick={onRowClick?()=>onRowClick(r):undefined} className={onRowClick?'clickable':undefined}>
+   <tbody>{view.slice(current*pageSize,(current+1)*pageSize).map(r=><tr key={rowKey(r)} onClick={onRowClick?()=>onRowClick(r):undefined} className={onRowClick?'clickable':undefined} tabIndex={onRowClick?0:undefined} onKeyDown={onRowClick?e=>{if(e.target===e.currentTarget&&(e.key==='Enter'||e.key===' ')){e.preventDefault();onRowClick(r);}}:undefined}>
     {columns.map(c=><td key={c.key} className={align(c)}>{c.render?c.render(r):show(c.value(r))}</td>)}
    </tr>)}</tbody>
   </table></div>

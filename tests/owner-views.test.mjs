@@ -40,5 +40,17 @@ test('follow-up list covers undecided cases, due ones first, bucketed by quote a
  assert.deepEqual(v.rows.map(r=>r.caseId),['b','a','h','d','e']);
  assert.deepEqual(v.rows.map(r=>r.bucket),['stale','fresh','mid','stale','noquote']);
  assert.equal(v.rows[0].due,true);assert.equal(v.rows[2].due,false);assert.equal(v.rows[1].acFee,150);assert.equal(v.rows[0].acFee,null);
- assert.deepEqual(v.totals.due,{count:1,net:2000});assert.deepEqual(v.totals.stale,{count:2,net:5000});assert.equal(v.totals.all.count,5);
+ assert.deepEqual(v.totals.due,{count:1,net:2000,unknown:0});assert.deepEqual(v.totals.stale,{count:2,net:5000,unknown:0});assert.equal(v.totals.all.count,5);
+});
+
+test('follow-up totals report quoted cases with a missing amount instead of adding them as 0',()=>{
+ const c=o=>({id:'c',number:'A901',title:'示範',clientId:'k',stage:'報價',...o});
+ const v=followupView([c({id:'a'}),c({id:'b'}),c({id:'e',stage:'提案'})],[{caseIds:['a'],date:'2026-11-10',net:50000,quotes:[]},{caseIds:['b'],date:'2026-11-12',net:null,quotes:[]}],'2026-11-16');
+ assert.deepEqual(v.totals.all,{count:3,net:50000,unknown:1});assert.deepEqual(v.totals.fresh,{count:2,net:50000,unknown:1});
+});
+
+test('a quote with no usable date is 報價日待補, not 尚未報價, and its missing amount is reported',()=>{
+ const v=followupView([{id:'a',number:'A901',title:'示範',clientId:'k',stage:'報價'}],[{caseIds:['a'],date:null,net:null,quotes:[]}],'2026-11-16');
+ assert.equal(v.rows[0].bucket,'undated');assert.equal(v.rows[0].hasQuote,true);
+ assert.equal(v.totals.noquote.count,0);assert.equal(v.totals.all.unknown,1);
 });

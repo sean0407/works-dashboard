@@ -44,7 +44,7 @@ test('daily digest lists due follow-ups, activities in the next 7 days and overd
  const ch=['案件ID','原案號','案名','商機狀態','下次追案日','下一步','活動開始日','活動結束日'];
  const cases=[ch,['a','A901','示範甲','已報價待確認','2026-11-10','電話確認','',''],['b','A902','示範乙','已報價待確認','2026-11-30','','',''],['c','A903','示範丙','已成交','2026-11-01','',new Date(2026,10,20),new Date(2026,10,22)],['d','A904','示範丁','未成交','2026-11-01','','2026-11-18','']];
  const ih=['發票號碼','案件ID','開票日','含稅總額','發票狀態','收款到期日','已收款'];
- const invoices=[ih,['ZZ00000001','a','2026-09-01',1050,'有效','',''],['ZZ00000002','a','2026-09-01',2100,'有效','','是'],['ZZ00000003','c','2026-11-10',3150,'有效','',''],['ZZ00000004','c','2026-06-01',4200,'作廢','',''],['ZZ00000005','c','2026-06-01','5,250','有效','2026-12-31','']];
+ const invoices=[ih,['ZZ00000001','b','2026-09-01',1050,'有效','',''],['ZZ00000002','b','2026-09-01',2100,'有效','','是'],['ZZ00000003','c','2026-11-10',3150,'有效','',''],['ZZ00000004','c','2026-06-01',4200,'作廢','',''],['ZZ00000005','c','2026-06-01','5,250','有效','2026-12-31','']];
  const d=plain(buildDigest(cases,invoices,'2026-11-16'));
  assert.deepEqual(d.followups.map(f=>f.label),['A901 示範甲']);assert.deepEqual(d.activities,[{label:'A903 示範丙',start:'2026-11-20',end:'2026-11-22'}]);
  assert.deepEqual(d.overdue.map(o=>o.number),['ZZ00000001']);assert.equal(d.overdueTotal,1050);assert.equal(d.overdue[0].due,'2026-10-01');
@@ -107,4 +107,28 @@ test('a run of unreadable scans stops after 15 tries and each try is saved befor
 test('the importer writes nothing when 來源文件ID is missing from 報價版本',()=>{
  const b=books(2);b['報價版本'][0]=b['報價版本'][0].map(h=>h==='來源文件ID'?'來源文件':h);
  assert.throws(()=>runExtract(b,()=>'A901 報價'),/來源文件ID/);
+});
+
+test('digest lists overdue invoices with a blank amount, reads m/d/yyyy dates, and drops settled cases from follow-ups',()=>{
+ const ch=['案件ID','原案號','案名','商機狀態','下次追案日','下一步','活動開始日','活動結束日','簽回文件ID','成交決策日','結案狀態'];
+ const cases=[ch,
+  ['a','A901','示範甲','準備報價','2026-11-10','','','','','',''],
+  ['b','A902','示範乙','已報價待確認','2026-11-10','','','','doc_s','2026-11-01',''],
+  ['c','A903','示範丙','準備報價','2026-11-10','','','','','',''],
+  ['d','A904','示範丁','準備報價','2026-11-10','','','','','','已結案']];
+ const ih=['發票號碼','案件ID','開票日','含稅總額','發票狀態','收款到期日','已收款'];
+ const invoices=[ih,['ZZ00000001','c','2026-01-10','','有效','',''],['ZZ00000002','c','9/1/2026',2100,'有效','','']];
+ const d=plain(buildDigest(cases,invoices,'2026-11-16',new Set(['doc_s'])));
+ assert.deepEqual(d.followups.map(f=>f.label),['A901 示範甲'],'signed, invoiced and closed cases are not chased');
+ assert.deepEqual(d.overdue.map(o=>[o.number,o.gross,o.due]),[['ZZ00000001',null,'2026-02-09'],['ZZ00000002',2100,'2026-10-01']]);
+ assert.equal(d.overdueTotal,2100);assert.equal(d.overdueUnknown,1);
+ const body=digestBody(d,'2026-11-16');
+ assert.match(body,/逾期應收】2 張，已知金額合計 NT\$ 2,100（另 1 張金額待補）/);assert.match(body,/ZZ00000001　金額待補/);
+});
+
+test('digest only treats a case as signed when its signing document exists, and never trips on inherited names',()=>{
+ const ch=['案件ID','原案號','案名','商機狀態','下次追案日','下一步','活動開始日','活動結束日','簽回文件ID','成交決策日','結案狀態'];
+ const cases=[ch,['constructor','A905','示範戊','準備報價','2026-11-10','','','','doc_gone','2026-11-01','']];
+ const d=plain(buildDigest(cases,[['發票號碼','案件ID','開票日','含稅總額','發票狀態','收款到期日','已收款']],'2026-11-16',new Set(['doc_other'])));
+ assert.deepEqual(d.followups.map(f=>f.label),['A905 示範戊']);
 });
