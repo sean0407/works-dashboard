@@ -1,7 +1,7 @@
 'use client';
 import {useEffect,useMemo,useState,type ReactNode} from 'react';
 import {ArrowDown,ArrowUp,ArrowUpDown,Download,X} from 'lucide-react';
-import {applyFilters,toSheet,type Cell,type Sort,type TableColumn} from '@/lib/table';
+import {applyFilters,rowsSignature,toSheet,type Cell,type Sort,type TableColumn} from '@/lib/table';
 
 export type {Cell};
 export type Column<T>=TableColumn<T>&{
@@ -18,7 +18,9 @@ export function DataTable<T>({rows,columns,rowKey,onRowClick,fileName,pageSize=5
  const [page,setPage]=useState(0);
  const [busy,setBusy]=useState(false);
  const view=useMemo(()=>applyFilters(rows,columns,filters,sort),[rows,columns,filters,sort]);
- useEffect(()=>setPage(0),[filters,sort,rows]);
+ // Back to page 1 only when the rows really change: opening a case re-renders the page with an equal, rebuilt list.
+ const signature=useMemo(()=>rowsSignature(rows,rowKey),[rows,rowKey]);
+ useEffect(()=>setPage(0),[filters,sort,signature]);
  const pages=Math.max(1,Math.ceil(view.length/pageSize)),current=Math.min(page,pages-1);
  const options=useMemo(()=>Object.fromEntries(columns.filter(c=>c.filter==='select').map(c=>[c.key,[...new Set(rows.map(r=>c.value(r)).filter(v=>v!=null&&v!=='').map(String))].sort((a,b)=>a.localeCompare(b,'zh-Hant',{numeric:true}))])),[rows,columns]);
  const cycle=(key:string)=>setSort(s=>!s||s.key!==key?{key,dir:'asc'}:s.dir==='asc'?{key,dir:'desc'}:null);

@@ -12,6 +12,7 @@ import {activityView,type ActivityRow} from '@/lib/domain/calendar';
 import {clientView,DORMANT_DAYS,type ClientRow} from '@/lib/domain/clients';
 import {CoverageSummary,DocumentCoveragePanel,type CoverageFilter} from './document-coverage';
 import {DataTable,type Column} from './data-table';
+import {PERCENT,percentOf} from '@/lib/table';
 import {KpiCards} from './kpi-cards';
 type Analysis=ReturnType<typeof derive>;
 type ProjectFilter=CaseStage|'all'|'invoiced';
@@ -49,7 +50,11 @@ export default function Dashboard({signedIn,signInPath,loadData,onSignIn,signInL
  const coverage=useMemo(()=>data&&a?documentCoverage(data,a,period):null,[data,a,period]);
  const follow=useMemo(()=>a?followupView(a.cases,a.latestQuotes,today):null,[a,today]);
  const prior=useMemo(()=>data&&periodKind!=='all'?derive(data,{...filters,period:period.previous}):null,[data,filters,periodKind,period]);
- const selectedCase=a?.cases.find(c=>c.id===selected)??(data&&selected?derive(data,{period:{start:null,end:null},today}).cases.find(c=>c.id===selected):null)??null;const activeTab=tabs.find(t=>t.key===tab)!;
+ // Same filters over every date: receivables that are still open do not disappear when a new year starts.
+ const allDates=useMemo(()=>data&&periodKind!=='all'?derive(data,{...filters,period:{start:null,end:null}}):a,[data,filters,periodKind,a]);
+ // No filters at all: client history and the case drawer for a case outside the current filters.
+ const everything=useMemo(()=>data?derive(data,{period:{start:null,end:null},today}):null,[data,today]);
+ const selectedCase=a?.cases.find(c=>c.id===selected)??(selected?everything?.cases.find(c=>c.id===selected):null)??null;const activeTab=tabs.find(t=>t.key===tab)!;
  const navigate=(next:Tab)=>{setTab(next);setMobile(false);};
  const activeFilterCount=[clientId,brand,status,search,activityOn].filter(Boolean).length;
  const reset=()=>{setClient('');setBrand('');setStatus('');setSearch('');setActivityOn(false);};
@@ -72,7 +77,7 @@ export default function Dashboard({signedIn,signInPath,loadData,onSignIn,signInL
     {moreFilters&&<section className="expanded-filters"><label className="search-input"><Search size={16}/><input aria-label="搜尋案件" placeholder="搜尋案號、案名或公司" value={search} onChange={e=>setSearch(e.target.value)}/></label><select aria-label="商機狀態" value={status} onChange={e=>setStatus(e.target.value)}><option value="">所有商機狀態</option>{['需求接洽','準備報價','已報價待確認','已成交','未成交','待核對'].map(s=><option key={s}>{s}</option>)}</select><label className="checkbox-label"><input type="checkbox" checked={activityOn} onChange={e=>setActivityOn(e.target.checked)}/>活動日期重疊</label>{activityOn&&<div className="date-range"><input aria-label="活動篩選開始日" type="date" value={activityStart} onChange={e=>setActivityStart(e.target.value)}/><span>至</span><input aria-label="活動篩選結束日" type="date" value={activityEnd} min={activityStart} onChange={e=>setActivityEnd(e.target.value)}/></div>}<button className="text-button" onClick={reset}>清除篩選</button>{activityOn&&<p className="filter-help">僅篩選活動期間有重疊的案件；金額保留原額，不按天數分攤。</p>}</section>}
     {a&&data?<><div className="scope-line"><span><span className="scope-dot"/>{period.label}{period.start?` · ${period.start} — ${period.end}`:''}</span><span>金額：新臺幣 TWD</span></div>
      {tab==='overview'&&<>{follow!.totals.all.count>0&&<div className="follow-strip"><BellRing size={17}/><p><strong>追案提醒</strong>{follow!.totals.due.count>0?`${follow!.totals.due.count} 案已到追案日 · `:''}{follow!.totals.fresh.count} 案報價 30 天內待回覆 · {follow!.totals.stale.count} 案報價超過 90 天未決定</p><button className="text-link" onClick={()=>navigate('followups')}>查看追案清單<ArrowRight size={15}/></button></div>}<Metrics a={a} prior={prior} period={period} yearly={periodKind==='year'}/><div className="dashboard-grid"><section className="panel trend-panel"><PanelTitle title="營收的每一步" sub="依各自日期歸屬 · 已知金額" action={<span className="subtle-tag">{periodKind==='all'?'最近 12 個有紀錄月份':period.label}</span>}/><div className="chart-tabs">{([{key:'quoted',label:'已報價未稅'},{key:'invoiced',label:'已開票未稅'},{key:'pending',label:'待成交未稅'}] as const).map(m=><button key={m.key} onClick={()=>setChartMetric(m.key)} className={chartMetric===m.key?'active':''}>{m.label}</button>)}</div><Trend data={a.trends.slice(-12)} metric={chartMetric} prev={periodKind==='year'?prior?.trends:undefined}/><div className="chart-foot"><span className="legend-dot"/> {chartMetric==='invoiced'?'按發票開立日':'同案號最新版本 · 按報價日'}{periodKind==='year'&&<em className="legend-prev">去年同月</em>}<span>缺少金額的紀錄不計入曲線</span></div></section><section className="panel customer-panel"><PanelTitle title="主要合作客戶" sub="依已開票未稅 · 付款公司"/><Ranking a={a} select={setClient}/></section></div><div className="bottom-full"><section className="panel"><PanelTitle title="案件進度一覽" sub="件數占比與未稅金額 · 報價依最新報價，開票與結案依發票（含追加）" action={<button className="text-link" onClick={()=>navigate('projects')}>查看案件<ArrowRight size={15}/></button>}/><Stages a={a} pick={s=>{setStageFilter(s);navigate('projects');}}/></section></div><div className="quality-strip"><span className="quality-icon"><Info size={17}/></span><div><strong>每一個數字，都保留它的依據。</strong><p>{a.metrics.unknownQuotedCount} 件最新報價金額待核對 · {a.metrics.ambiguousCount} 件商機關聯待確認。來源涵蓋期間尚須核對，不代表完整營業紀錄。</p></div><button className="text-link" onClick={()=>navigate('review')}>查看待核對<ArrowRight size={15}/></button></div><div className="overview-bottom"><CoverageSummary coverage={coverage!} open={f=>{setCoverageFilter(f);navigate('coverage');}}/></div></>}
-     {tab==='quotes'&&<Quotes data={data} a={a} period={period} select={setSelected}/>}{tab==='calendar'&&<Activities a={a} data={data} today={today} select={setSelected}/>}{tab==='clients'&&<Clients data={data} today={today} pick={id=>{setClient(id);navigate('projects');}}/>}{tab==='followups'&&<Followups rows={follow!} data={data} select={setSelected}/>}{tab==='finance'&&<Finance data={data} a={a} today={today} select={setSelected}/>}{tab==='subcontracts'&&<Subcontracts data={data} a={a} period={period} select={setSelected}/>}{tab==='projects'&&<section className="panel"><PanelTitle title="所有案件" sub={`${a.cases.length} 件紀錄 · 依進度排序；財務期間不隱藏進行中案件`}/><ProjectTable a={a} data={data} select={setSelected} stage={stageFilter} setStage={setStageFilter}/></section>}{tab==='coverage'&&<DocumentCoveragePanel coverage={coverage!} filter={coverageFilter} setFilter={setCoverageFilter} select={setSelected}/>}{tab==='review'&&<Review a={a} data={data} select={setSelected}/>}
+     {tab==='quotes'&&<Quotes data={data} a={a} period={period} select={setSelected}/>}{tab==='calendar'&&<Activities a={a} data={data} today={today} select={setSelected}/>}{tab==='clients'&&<Clients data={data} all={everything!} today={today} pick={id=>{setClient(id);navigate('projects');}}/>}{tab==='followups'&&<Followups rows={follow!} data={data} select={setSelected}/>}{tab==='finance'&&<Finance data={data} a={a} all={allDates!} today={today} select={setSelected}/>}{tab==='subcontracts'&&<Subcontracts data={data} a={a} period={period} select={setSelected}/>}{tab==='projects'&&<section className="panel"><PanelTitle title="所有案件" sub={`${a.cases.length} 件紀錄 · 依進度排序；財務期間不隱藏進行中案件`}/><ProjectTable a={a} data={data} select={setSelected} stage={stageFilter} setStage={setStageFilter}/></section>}{tab==='coverage'&&<DocumentCoveragePanel coverage={coverage!} filter={coverageFilter} setFilter={setCoverageFilter} select={setSelected}/>}{tab==='review'&&<Review a={a} data={data} select={setSelected}/>}
      <footer className="page-footer"><span>WORKS & CO. <span className="footer-dot">/</span> 讓每一次合作，都有跡可循。</span><span><Database size={12}/>{sources.toLocaleString()} 筆來源紀錄 · 即時讀取 Google Sheets</span></footer>
     </>:loading?<Loading/>:<section className="panel no-source"><Empty title="準備好，從可靠的資料開始" description="連結完成後，重新整理即可看到案件與財務全貌。這裡不會顯示範例金額。"/><button className="button primary" onClick={refresh}><RefreshCw size={16}/>重新讀取來源</button></section>}</>}
    </main></div>{selectedCase&&data&&<CaseDrawer c={selectedCase} data={data} close={()=>setSelected(null)}/>}</div>;
@@ -165,17 +170,17 @@ function Quotes({data,a,period,select}:{data:Dataset;a:Analysis;period:any;selec
  const [view,setView]=useState<QuoteView>('all');
  const ids=new Set(a.cases.map(c=>c.id));const quotes=data.quotes.filter(q=>ids.has(q.caseId)&&inPeriod(q.date,period));const latestIds=new Set(a.latestQuotes.flatMap(q=>q.quotes.map(v=>v.id)));const unresolvedIds=new Set(a.latestQuotes.filter(q=>!q.quote).flatMap(q=>q.caseIds));
  const byCase=new Map(a.cases.map(c=>[c.id,c]));
- const status=(q:typeof quotes[number])=>latestIds.has(q.id)?'最新報價（計入）':unresolvedIds.has(text(q.caseId))?'版本待核對':'舊版留存';
+ const status=(q:typeof quotes[number])=>latestIds.has(q.id)?'最新報價（計入）':a.pendingImportIds.has(text(q.id))?'匯入待補日期':unresolvedIds.has(text(q.caseId))?'版本待核對':'舊版留存';
  const columns:Column<typeof quotes[number]>[]=[
   {key:'case',label:'案號',value:q=>text(byCase.get(q.caseId)?.number),filter:'text',width:'90px'},
   {key:'title',label:'報價名稱',value:q=>text(q.title)||text(byCase.get(q.caseId)?.title),filter:'text',render:q=><button className="case-button" onClick={e=>{e.stopPropagation();select(text(q.caseId));}}><strong>{text(q.title)||text(byCase.get(q.caseId)?.title)}</strong></button>},
   {key:'date',label:'報價日',kind:'date',value:q=>parseDate(q.date),filter:'text'},
   {key:'version',label:'版本',value:q=>text(q.version)||'未註明',filter:'select'},
   {key:'role',label:'範圍',value:q=>text(q.role)||'待確認',filter:'select'},
-  {key:'status',label:'統計版本',value:status,filter:'select',render:q=><Badge tone={latestIds.has(q.id)?'green':unresolvedIds.has(text(q.caseId))?'amber':'neutral'}>{status(q)}</Badge>},
+  {key:'status',label:'統計版本',value:status,filter:'select',render:q=><Badge tone={latestIds.has(q.id)?'green':a.pendingImportIds.has(text(q.id))||unresolvedIds.has(text(q.caseId))?'amber':'neutral'}>{status(q)}</Badge>},
   {key:'net',label:'未稅',kind:'num',value:q=>money(q.net),filter:'none'},
   {key:'gross',label:'含稅',kind:'num',value:q=>money(q.gross),filter:'none'},
-  {key:'rate',label:'服務費率',kind:'num',value:q=>money(q.feeRate),filter:'none',render:q=>{const r=money(q.feeRate);return r===null?<span className="muted">待補</span>:`${Math.round((r>1?r:r*100)*10)/10}%`;}},
+  {key:'rate',label:'服務費率',kind:'num',value:q=>percentOf(money(q.feeRate)),format:PERCENT,filter:'none',render:q=>{const r=percentOf(money(q.feeRate));return r===null?<span className="muted">待補</span>:`${r}%`;}},
   {key:'ac',label:'AC 費（毛利）',kind:'num',value:q=>acFee(q),filter:'none'},
   {key:'source',label:'原始報價',value:q=>data.documents.find(d=>d.id===q.sourceId)?.url?'有':'未連結',filter:'select',render:q=><SourceLink url={data.documents.find(d=>d.id===q.sourceId)?.url}>開啟</SourceLink>},
  ];
@@ -203,7 +208,7 @@ function Subcontracts({data,a,period,select}:{data:Dataset;a:Analysis;period:any
   {key:'revenue',label:'開票未稅',kind:'num',value:c=>c.revenueNet,filter:'none'},
   {key:'cost',label:'發包未稅',kind:'num',value:c=>c.costNet,filter:'none',render:c=><>{fmt(c.costNet)}{c.costUnknown>0&&<small className="amber-text">{c.costUnknown} 筆金額待補</small>}</>},
   {key:'margin',label:'毛利',kind:'num',value:c=>c.margin,filter:'none',render:c=>c.margin===null?<span className="muted">待確認</span>:<span className={c.margin<0?'amber-text':''}>{fmt(c.margin)}</span>},
-  {key:'rate',label:'毛利率',kind:'num',value:c=>c.marginRate,filter:'none',render:c=>pct(c.marginRate)},
+  {key:'rate',label:'毛利率',kind:'num',value:c=>c.marginRate,format:PERCENT,filter:'none',render:c=>pct(c.marginRate)},
  ];
  const cols:Column<R>[]=[
   {key:'case',label:'案號',value:r=>text(byCase.get(text(r.caseId))?.number)||text(r.caseNumber),filter:'text',width:'96px'},
@@ -240,10 +245,12 @@ function Subcontracts({data,a,period,select}:{data:Dataset;a:Analysis;period:any
  {view==="vendors"?<section className="panel"><PanelTitle title="各廠商發包與開票" sub="只計狀態「有效」 · 尚未開票 = 報價或請款單金額"/>{!vendorRows.length?<Empty title="此期間沒有發包紀錄"/>:<DataTable rows={vendorRows} columns={vendorCols} rowKey={x=>x.vendor} fileName="各廠商發包"/>}</section>:<section className="panel"><PanelTitle title="各案發包與毛利" sub="開票未稅 − 發包未稅 · 發包金額有缺時毛利顯示待確認"/>{!v.perCase.length?<Empty title="此期間沒有發包紀錄" description="在試算表「發包項目」分頁新增廠商報價或發票後，重新整理即可看到。"/>:<DataTable rows={v.perCase} columns={caseCols} rowKey={c=>c.caseId} onRowClick={c=>select(c.caseId)} fileName="各案發包與毛利"/>}</section>}
  <section className="panel"><PanelTitle title={view==="invoiced"?"已開票的廠商發票":"發包單據明細"} sub="廠商報價、發票與請款單 · 依文件日期篩選期間 · 狀態「參考／重複／作廢」不計成本"/>{!detail.length?<Empty title="此期間沒有發包單據"/>:<DataTable rows={detail} columns={cols} rowKey={r=>text(r.id)} onRowClick={r=>{if(r.caseId)select(text(r.caseId));}} fileName="發包單據明細"/>}</section></>;
 }
-function Finance({data,a,today,select}:{data:Dataset;a:Analysis;today:string;select:(id:string)=>void}){
+function Finance({data,a,all,today,select}:{data:Dataset;a:Analysis;all:Analysis;today:string;select:(id:string)=>void}){
  const [view,setView]=useState<'all'|'open'|'overdue'|'collected'>('open');
  const m=a.metrics;const byCase=new Map(data.cases.map(c=>[c.id,c]));
- const r=useMemo(()=>receivableView(a.invoices,today),[a.invoices,today]);const t=r.totals;
+ // Open and overdue look at every unpaid invoice up to today; collected and all follow the selected period.
+ const open=useMemo(()=>receivableView(all.invoices,today),[all.invoices,today]);
+ const r=useMemo(()=>receivableView(a.invoices,today),[a.invoices,today]);const t={...open.totals,collected:r.totals.collected,collectedCount:r.totals.collectedCount};
  const tone=(x:Receivable)=>x.state==='已收款'?'green':x.state==='未收'?'neutral':'amber';
  const columns:Column<Receivable>[]=[
   {key:'number',label:'發票號碼',value:i=>text(i.number),filter:'text'},
@@ -255,16 +262,17 @@ function Finance({data,a,today,select}:{data:Dataset;a:Analysis;today:string;sel
   {key:'receivable',label:'應收金額',kind:'num',value:i=>i.receivable,filter:'none',render:i=>i.receivable===null?<Badge tone="amber">金額待補</Badge>:fmt(i.receivable)},
   {key:'age',label:'開票後天數',kind:'num',value:i=>i.ageDays,filter:'none'},
   {key:'due',label:'到期日',kind:'date',value:i=>i.due,filter:'text',render:i=>i.due?<>{i.due}{i.dueAssumed&&<small className="muted">推算</small>}</>:'—'},
+  {key:'late',label:'逾期天數',kind:'num',value:i=>i.overdueDays,filter:'none',render:i=>i.overdueDays===null?'—':<span className="amber-text">{i.overdueDays} 天</span>},
   {key:'state',label:'收款狀態',value:i=>i.state,filter:'select',render:i=><Badge tone={tone(i)}>{i.state}</Badge>},
   {key:'source',label:'原始發票',value:i=>data.documents.find(d=>d.id===i.sourceId)?.url?'有':'未連結',filter:'select',render:i=><SourceLink url={data.documents.find(d=>d.id===i.sourceId)?.url}>開啟</SourceLink>},
  ];
- const shown=view==='open'?r.open:view==='overdue'?r.overdue:view==='collected'?r.collected:r.rows;
+ const shown=view==='open'?open.open:view==='overdue'?open.overdue:view==='collected'?r.collected:r.rows;
  return <><KpiCards className="page-kpis" label="依收款狀態篩選" value={view} onChange={setView} items={[
-  {key:'open',label:'應收帳款（含稅）',prefix:'NT$',value:fmt(t.receivable),note:`${t.openCount} 張發票尚未標記已收${t.unknown?` · ${t.unknown} 張金額待補`:''}`},
-  {key:'overdue',label:'逾期應收（含稅）',prefix:'NT$',value:fmt(t.overdue),note:`${t.overdueCount} 張已過到期日 · 未填到期日者以開票後 ${DEFAULT_TERM_DAYS} 天計`},
-  {key:'collected',label:'已收款（含稅）',prefix:'NT$',value:fmt(t.collected),note:`${t.collectedCount} 張 · 發票分頁「已收款」填「是」`},
+  {key:'open',label:'應收帳款（含稅）',prefix:'NT$',value:fmt(t.receivable),note:`${t.openCount} 張尚未標記已收 · 不限開票期間${t.unknown?` · ${t.unknown} 張金額待補`:''}`},
+  {key:'overdue',label:'逾期應收（含稅）',prefix:'NT$',value:fmt(t.overdue),note:`${t.overdueCount} 張已過到期日${t.overdueUnknown?`（${t.overdueUnknown} 張金額待補）`:''} · 未填到期日者以開票後 ${DEFAULT_TERM_DAYS} 天計`},
+  {key:'collected',label:'已收款（含稅）',prefix:'NT$',value:fmt(t.collected),note:`${t.collectedCount} 張 · 按開票日篩選 · 發票分頁「已收款」填「是」`},
   {key:'all',label:'有效開票（含稅）',prefix:'NT$',value:fmt(m.invoiceGross),note:`${m.invoiceCount} 張發票 · 按開票日篩選`},
- ]}/><div className="notice soft"><Info size={17}/><p>有開發票就算應收。收到款後，在試算表「發票」分頁的「已收款」欄填「是」，這張發票就會從應收移除。</p></div><section className="panel"><PanelTitle title="發票與應收明細" sub="含稅金額 · 點欄名排序，第二列可篩選"/>{!a.invoices.length?<Empty/>:<DataTable rows={shown} columns={columns} rowKey={i=>text(i.id)} onRowClick={i=>select(text(i.caseId))} fileName="發票與應收明細" empty="沒有符合的發票"/>}</section><p className="section-note">作廢發票不列入。已登錄並確認的收款分配會先從應收金額扣除。</p></>;
+ ]}/><div className="notice soft"><Info size={17}/><p>有開發票就算應收。收到款後，在試算表「發票」分頁的「已收款」欄填「是」，這張發票就會從應收移除。</p></div><section className="panel"><PanelTitle title="發票與應收明細" sub="含稅金額 · 點欄名排序，第二列可篩選"/>{!a.invoices.length&&!open.rows.length?<Empty/>:<DataTable rows={shown} columns={columns} rowKey={i=>text(i.id)} onRowClick={i=>select(text(i.caseId))} fileName="發票與應收明細" empty="沒有符合的發票"/>}</section><p className="section-note">作廢發票不列入。已登錄並確認的收款分配會先從應收金額扣除。</p></>;
 }
 function Activities({a,data,today,select}:{a:Analysis;data:Dataset;today:string;select:(id:string)=>void}){
  const [view,setView]=useState<'upcoming'|'soon'|'month'|'all'>('upcoming');
@@ -292,21 +300,21 @@ function Activities({a,data,today,select}:{a:Analysis;data:Dataset;today:string;
   {key:'all',label:'全部有日期的活動',value:t.all.count,unit:'場',note:v.undated?`另有 ${v.undated} 案未填活動日期`:'含已結束'},
  ]}/><div className="notice soft"><Info size={17}/><p>活動日期來自「案件商機」的「活動開始日／活動結束日」。人力人次由最新報價的明細推算：有保險費列時取其人數，否則加總以「位」計價的班次。</p></div><section className="panel"><PanelTitle title="活動清單" sub="即將開始的排最前 · 點選列檢視案件"/>{!v.rows.length?<Empty title="還沒有填活動日期的案件" description="在「案件商機」填上活動開始日，就會出現在這裡。"/>:<DataTable rows={shown} columns={columns} rowKey={r=>r.caseId} onRowClick={r=>select(r.caseId)} fileName="活動行事曆" empty="這段時間沒有活動"/>}</section></>;
 }
-function Clients({data,today,pick}:{data:Dataset;today:string;pick:(id:string)=>void}){
+function Clients({data,all,today,pick}:{data:Dataset;all:Analysis;today:string;pick:(id:string)=>void}){
  const [view,setView]=useState<'all'|'active'|'dormant'|'top'>('all');
  // Client history spans every year, so it ignores the dashboard's period and other filters.
- const v=useMemo(()=>{const all=derive(data,{period:{start:null,end:null},today});return clientView(data.clients,all.cases,all.invoices,all.latestQuotes,today);},[data,today]);const t=v.totals;
+ const v=useMemo(()=>clientView(data.clients,all.cases,all.invoices,all.latestQuotes,today),[data,all,today]);const t=v.totals;
  const shown=view==='active'?v.rows.filter(r=>r.activeThisYear):view==='dormant'?v.rows.filter(r=>r.dormant):view==='top'?v.rows.filter(r=>t.top3Ids.has(r.clientId)):v.rows;
  const pct=(n:number|null)=>n===null?'—':`${Math.round(n*1000)/10}%`;
  const columns:Column<ClientRow>[]=[
   {key:'name',label:'付款公司',value:r=>r.name,filter:'text',render:r=><strong className="cell-strong">{r.name}</strong>},
-  {key:'total',label:'累計開票未稅',kind:'num',value:r=>r.total,filter:'none'},
-  {key:'share',label:'占比',kind:'num',value:r=>r.share,filter:'none',render:r=>pct(r.share)},
+  {key:'total',label:'累計開票未稅',kind:'num',value:r=>r.total,filter:'none',render:r=><>{fmt(r.total)}{r.unknown>0&&<small className="amber-text">{r.unknown} 張金額待補</small>}</>},
+  {key:'share',label:'占比',kind:'num',value:r=>r.share,exportValue:r=>r.share*100,format:PERCENT,filter:'none',render:r=>pct(r.share)},
   ...v.years.map(y=>({key:`y${y}`,label:`${y} 年`,kind:'num' as const,value:(r:ClientRow)=>r.byYear[y]??null,filter:'none' as const})),
   {key:'cases',label:'開票案件數',kind:'num',value:r=>r.cases,filter:'none'},
   {key:'average',label:'平均案額',kind:'num',value:r=>r.average,filter:'none'},
   {key:'ac',label:'毛利（AC 費）',kind:'num',value:r=>r.acFee,filter:'none',render:r=>r.acFee===null?<span className="muted">待補</span>:<>{fmt(r.acFee)}<small className="muted">{r.acCases} 案</small></>},
-  {key:'win',label:'成交率',kind:'num',value:r=>r.winRate,filter:'none',render:r=>r.winRate===null?'—':<>{pct(r.winRate)}<small className="muted">{r.won}／{r.originals} 案</small></>},
+  {key:'win',label:'成交率',kind:'num',value:r=>r.winRate,exportValue:r=>r.winRate===null?null:r.winRate*100,format:PERCENT,filter:'none',render:r=>r.winRate===null?'—':<>{pct(r.winRate)}<small className="muted">{r.won}／{r.originals} 案</small></>},
   {key:'last',label:'最後開票日',kind:'date',value:r=>r.lastDate,filter:'text'},
   {key:'since',label:'距今天數',kind:'num',value:r=>r.daysSince,filter:'none',render:r=>r.daysSince===null?'—':<span className={r.dormant?'amber-text':''}>{r.daysSince} 天</span>},
  ];
@@ -341,7 +349,7 @@ function Followups({rows,data,select}:{rows:ReturnType<typeof followupView>;data
   {key:'stale',label:'超過 90 天',value:t.stale.count,unit:'案',note:`NT$ ${fmt(t.stale.net)} · 沒下文可改為未成交`},
  ]}/><div className="notice soft"><Info size={17}/><p>在試算表「案件商機」分頁填「下次追案日」和「下一步」，到期當天會出現在「今天該追」。沒有下文的案件把「商機狀態」改為「未成交」，就會離開這張清單。</p></div><section className="panel"><PanelTitle title="追案清單" sub="尚未成交也未標記未成交的案件 · 該追的排最前，其餘依報價日由新到舊"/>{!rows.rows.length?<Empty title="目前沒有待追的案件"/>:<DataTable rows={shown} columns={columns} rowKey={r=>r.caseId} onRowClick={r=>select(r.caseId)} fileName="追案清單" empty="沒有符合的案件"/>}</section></>;
 }
-const ISSUE_LABEL:Record<string,string>={relationship:'案件關聯',quote_versions:'有效版本衝突',allocation:'收款分配',duplicate_invoice:'重複發票',duplicate_invoice_id:'發票識別碼重複',latest_quote:'最新報價待核對',resign:'改版待簽回',sale_date:'成交日期',won_evidence:'成交依據不足',invalid_value:'欄位值無法辨識',quote_reference:'報價未連結案件',case_reference:'發票未連結案件'};
+const ISSUE_LABEL:Record<string,string>={relationship:'案件關聯',quote_versions:'有效版本衝突',allocation:'收款分配',duplicate_invoice:'重複發票',duplicate_invoice_id:'發票識別碼重複',latest_quote:'最新報價待核對',import_review:'匯入報價待補',resign:'改版待簽回',sale_date:'成交日期',won_evidence:'成交依據不足',invalid_value:'欄位值無法辨識',quote_reference:'報價未連結案件',case_reference:'發票未連結案件'};
 function Review({a,data,select}:{a:Analysis;data:Dataset;select:(id:string)=>void}){
  const records=[...a.reconciliation.map(r=>({id:text(r.id),caseId:text(r.caseId),type:text(r.type),description:text(r.description),sourceId:text(r.sourceId)})),...a.issues.map((i,index)=>({...i,caseId:text(i.caseId),id:`derived-${index}`,sourceId:''}))].map(r=>({...r,label:ISSUE_LABEL[r.type]??r.type,origin:r.id.startsWith('derived-')?'系統檢查':'資料表待核對事項'}));
  const groups=[...records.reduce((m,r)=>m.set(r.label,(m.get(r.label)??0)+1),new Map<string,number>())].sort((x,y)=>y[1]-x[1]);

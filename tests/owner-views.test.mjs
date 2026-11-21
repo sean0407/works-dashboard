@@ -6,11 +6,13 @@ import {followupView} from '../lib/domain/followups.ts';
 
 const inv=o=>({id:'i',number:'AB1',date:'2026-10-01',gross:1050,balance:null,paid:null,overdue:false,...o});
 test('an issued invoice is a receivable for its gross until marked collected',()=>{
- const v=receivableView([inv({}),inv({id:'j',collected:'是'}),inv({id:'k',date:'2026-11-10'}),inv({id:'m',gross:null})],'2026-11-16');
- assert.deepEqual(v.rows.map(r=>r.state),['逾期','已收款','未收','金額待補']);
- assert.equal(v.totals.receivable,2100);assert.equal(v.totals.openCount,3);assert.equal(v.totals.unknown,1);
- assert.equal(v.totals.overdue,1050);assert.equal(v.totals.overdueCount,1);assert.equal(v.totals.collected,1050);
+ const v=receivableView([inv({}),inv({id:'j',collected:'是'}),inv({id:'k',date:'2026-11-10'}),inv({id:'m',gross:null}),inv({id:'n',gross:null,date:'2026-11-10'})],'2026-11-16');
+ // A past-due invoice with no amount yet still counts as overdue; its amount is unknown, not 0.
+ assert.deepEqual(v.rows.map(r=>r.state),['逾期','已收款','未收','逾期','金額待補']);
+ assert.equal(v.totals.receivable,2100);assert.equal(v.totals.openCount,4);assert.equal(v.totals.unknown,2);
+ assert.equal(v.totals.overdue,1050);assert.equal(v.totals.overdueCount,2);assert.equal(v.totals.overdueUnknown,1);assert.equal(v.totals.collected,1050);
  assert.equal(v.rows[0].ageDays,46);assert.equal(v.rows[0].due,'2026-10-31');assert.equal(v.rows[0].dueAssumed,true);
+ assert.equal(v.rows[0].overdueDays,16);assert.equal(v.rows[2].overdueDays,null);assert.equal(v.rows[1].overdueDays,null);
 });
 test('an explicit due date wins over the 30-day default, and confirmed receipts reduce the amount',()=>{
  const v=receivableView([inv({dueDate:'2026-12-31'}),inv({id:'p',paid:400}),inv({id:'q',balance:0,paid:1050}),inv({id:'r',balance:250,paid:800})],'2026-11-16');

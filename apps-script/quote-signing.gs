@@ -2,7 +2,7 @@
  * 沃克思｜報價單寄送與線上簽回。
  *
  * 和 document-import.gs 放在同一個 Apps Script 專案（新增一個指令碼檔案，貼上本檔全部內容）。
- * 必須由寄信的帳號安裝觸發器與部署網頁應用程式，信才會從該信箱寄出（目前為試算表擁有者 mamba20230501）。
+ * 必須由寄信的帳號安裝觸發器與部署網頁應用程式，信才會從該信箱寄出（應為試算表擁有者）。
  * 安裝步驟見 QUOTE-SIGNING-zh-TW.md。
  *
  * 分工（避免兩邊同時寫入互相覆蓋）：
@@ -118,6 +118,7 @@ function planSendQueue(headers, rows, today) {
     var reason = '';
     if (!String(row[col.id]).trim()) reason = '缺少簽署ID';
     else if (!String(row[col.quoteId]).trim()) reason = '缺少報價ID';
+    else if (!String(row[col.caseId]).trim()) reason = '缺少案件ID';
     else if (!String(row[col.sourceId]).trim()) reason = '缺少來源文件ID';
     else if (!isEmail(row[col.recipientEmail])) reason = '收件人Email 格式不正確';
     if (reason) { plan.invalid.push({ index: i, reason: reason }); return; }
@@ -271,7 +272,9 @@ function pageStateFor(status, due, today) {
   if (status === SIGN_STATUS.declined) return 'declined';
   if (status === SIGN_STATUS.expired) return 'expired';
   if (OPEN_STATUSES.indexOf(status) < 0) return 'invalid';
-  if (due && due < today) return 'expired';
+  // A link must carry a readable expiry; without one it would stay signable for ever.
+  if (!due) return 'invalid';
+  if (due < today) return 'expired';
   return 'open';
 }
 
@@ -405,7 +408,10 @@ function addSigningMenu_(menu) {
 }
 
 function installSigning() {
+  requireAdmin_();
   var ss = SpreadsheetApp.getActive();
+  // The public page opens the workbook by id: a web app has no "active" spreadsheet to fall back on.
+  PropertiesService.getScriptProperties().setProperty('SIGN_BOOK_ID', ss.getId());
   ensureSheet_(ss, SIGN_SHEET, Object.keys(SIGN_HEADERS).map(function (k) { return SIGN_HEADERS[k]; }));
   ensureSheet_(ss, SIGN_EVENT_SHEET, SIGN_EVENT_HEADERS);
   var exists = ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === 'processSendQueue'; });
@@ -432,8 +438,21 @@ function webAppUrl_() {
   try { return ScriptApp.getService().getUrl() || ''; } catch (e) { return ''; }
 }
 
+/**
+ * The workbook. Menus and triggers have the spreadsheet the script is bound to; the public web app may not, so it
+ * opens the id installSigning saved. The bound one comes first: a copied spreadsheet must never act on the original.
+ */
+function book_() {
+  var ss = null;
+  try { ss = SpreadsheetApp.getActive(); } catch (e) { ss = null; }
+  if (ss) return ss;
+  var id = PropertiesService.getScriptProperties().getProperty('SIGN_BOOK_ID');
+  if (!id) throw new Error('找不到試算表：請在試算表選單執行一次「安裝報價簽署」。');
+  return SpreadsheetApp.openById(id);
+}
+
 function settingValue_(key) {
-  var sheet = SpreadsheetApp.getActive().getSheetByName(SETTINGS_SHEET);
+  var sheet = book_().getSheetByName(SETTINGS_SHEET);
   if (!sheet) return '';
   var values = sheet.getDataRange().getValues();
   for (var i = 1; i < values.length; i++) if (String(values[i][0]).trim() === key) return String(values[i][1] || '').trim();
@@ -454,12 +473,12 @@ function signTable_(ss) {
 }
 
 function writeSignRow_(table, index) {
-  table.sheet.getRange(index + 2, 1, 1, table.headers.length).setValues([table.rows[index].slice(0, table.headers.length)]);
+  table.sheet.getRange(index + 2, 1, 1, table.headers.length).setValues([sheetSafeRow(table.rows[index].slice(0, table.headers.length))]);
 }
 
 function logSignEvent_(ss, signId, type, actor, agent, note) {
   var sheet = ss.getSheetByName(SIGN_EVENT_SHEET) || ensureSheet_(ss, SIGN_EVENT_SHEET, SIGN_EVENT_HEADERS);
-  sheet.appendRow(['evt_' + Utilities.getUuid().replace(/-/g, '').slice(0, 16), signId, type, new Date(), actor || '', agent || '', note || '']);
+  sheet.appendRow(sheetSafeRow(['evt_' + Utilities.getUuid().replace(/-/g, '').slice(0, 16), signId, type, new Date(), actor || '', agent || '', note || '']));
 }
 
 function todayIso_() {
@@ -510,9 +529,10 @@ function applySuperseded_(ss, table) {
   });
 }
 
-function processSendQueue() {
+function processSendQueue(e) {
+  requireAdmin_(e);
   withSignLock_(function () {
-    var ss = SpreadsheetApp.getActive();
+    var ss = book_();
     var table = signTable_(ss);
     var col = table.col, today = todayIso_();
     var plan = planSendQueue(table.headers, table.rows, today);
@@ -604,7 +624,7 @@ function doGet(e) {
 }
 
 function openSignature_(token) {
-  var ss = SpreadsheetApp.getActive();
+  var ss = book_();
   var table = signTable_(ss);
   var col = table.col;
   var i = findSignatureByTokenHash(table.headers, table.rows, sha256Text_(token));
@@ -630,7 +650,7 @@ function openSignature_(token) {
 /** Called from the page: the quote PDF as base64, only while the link is open. */
 function downloadQuotePdf(token) {
   if (!/^[0-9a-f]{64}$/.test(String(token))) throw new Error('連結無效');
-  var ss = SpreadsheetApp.getActive();
+  var ss = book_();
   var table = signTable_(ss);
   var col = table.col;
   var i = findSignatureByTokenHash(table.headers, table.rows, sha256Text_(token));
@@ -721,7 +741,7 @@ function submitSignature(token, payload) {
   var input = validateSignature(payload);
   if (input.error) throw new Error(input.error);
   return withSignLock_(function () {
-    var ss = SpreadsheetApp.getActive();
+    var ss = book_();
     var table = signTable_(ss);
     var col = table.col;
     var i = findSignatureByTokenHash(table.headers, table.rows, sha256Text_(token));
@@ -733,6 +753,11 @@ function submitSignature(token, payload) {
     if (state === 'signed') return { ok: true };
     if (state !== 'open') throw new Error('這個連結已無法簽回，請回覆原信件與我們聯絡。');
     var quoteId = String(row[col.quoteId]).trim(), caseId = String(row[col.caseId]).trim();
+    // Checked before anything is created: a link whose case or quote is missing must not end up 已簽回.
+    if (!caseId || !quoteId || !caseRowExists_(ss, caseId) || !quoteInfo_(ss, quoteId)) {
+      logSignEvent_(ss, signId, '簽回失敗', String(row[col.recipientEmail]), input.agent, '找不到案件 ' + caseId + ' 或報價 ' + quoteId);
+      throw new Error('這份報價的資料有誤，暫時無法簽回，請回覆原信件與我們聯絡。');
+    }
     var fileId = documentFileIds_(ss)[String(row[col.sourceId]).trim()];
     if (!fileId) throw new Error('找不到報價單檔案，請回覆原信件與我們聯絡。');
     var original = DriveApp.getFileById(fileId);
@@ -762,9 +787,9 @@ function submitSignature(token, payload) {
     var docId = docIdFor(saved.getId());
     var docSheet = ss.getSheetByName(DOC_SHEET);
     var docHeaders = docSheet.getRange(1, 1, 1, docSheet.getLastColumn()).getValues()[0];
-    docSheet.appendRow(signedDocumentRow(docHeaders, {
+    docSheet.appendRow(sheetSafeRow(signedDocumentRow(docHeaders, {
       id: docId, filename: certName, url: saved.getUrl(), sha256: sha256Hex_(saved.getBlob()), caseNumber: guessCaseNumber(title, '')
-    }));
+    })));
     // Case first, then the row: if the case write throws, the link stays open and the client can submit again.
     applySignedToCase_(ss, caseId, quoteId, day, docId);
     row[col.status] = SIGN_STATUS.signed;
@@ -790,6 +815,7 @@ function submitSignature(token, payload) {
 
 /** Menu: mark a quote signed (client replied by e-mail). Writes the case fields by the same rules phase 2 will use. */
 function markSignedFromMenu() {
+  requireAdmin_();
   var ui = SpreadsheetApp.getUi();
   var a = ui.prompt('標記報價已簽回', '輸入簽署ID（sig_ 開頭）：', ui.ButtonSet.OK_CANCEL);
   if (a.getSelectedButton() !== ui.Button.OK) return;
@@ -829,6 +855,14 @@ function markSigned_(signId, docId, actor) {
   return signId + ' 已標記為已簽回。' + caseNote;
 }
 
+function caseRowExists_(ss, caseId) {
+  if (!caseId) return false;
+  var data = ss.getSheetByName('案件商機').getDataRange().getValues();
+  var col = headerIndex(data[0], CASE_SIGN_HEADERS, '案件商機');
+  for (var k = 1; k < data.length; k++) if (String(data[k][col.id]).trim() === caseId) return true;
+  return false;
+}
+
 /** Writes the case + quote fields for a signed quote. Returns a short report. */
 function applySignedToCase_(ss, caseId, quoteId, day, docId) {
   var sheet = ss.getSheetByName('案件商機');
@@ -840,11 +874,11 @@ function applySignedToCase_(ss, caseId, quoteId, day, docId) {
   var plan = planSignedCase(data[0], data[r], day, docId);
   Object.keys(plan.set).forEach(function (key) {
     var value = /Date$/.test(key) ? new Date(plan.set[key] + 'T00:00:00') : plan.set[key];
-    sheet.getRange(r + 1, col[key] + 1).setValue(value);
+    sheet.getRange(r + 1, col[key] + 1).setValue(sheetSafe(value));
   });
   if (plan.conflicts.length) {
     var prev = String(data[r][col.reviewNotes] || '').trim();
-    sheet.getRange(r + 1, col.reviewNotes + 1).setValue((prev ? prev + '；' : '') + '線上簽回 ' + day + '：' + plan.conflicts.join('；'));
+    sheet.getRange(r + 1, col.reviewNotes + 1).setValue(sheetSafe((prev ? prev + '；' : '') + '線上簽回 ' + day + '：' + plan.conflicts.join('；')));
   }
   var qSheet = ss.getSheetByName('報價版本');
   var qData = qSheet.getDataRange().getValues();
@@ -859,6 +893,7 @@ function applySignedToCase_(ss, caseId, quoteId, day, docId) {
 }
 
 function voidSignatureFromMenu() {
+  requireAdmin_();
   var ui = SpreadsheetApp.getUi();
   var a = ui.prompt('作廢簽署連結', '輸入簽署ID（sig_ 開頭）：', ui.ButtonSet.OK_CANCEL);
   if (a.getSelectedButton() !== ui.Button.OK) return;
@@ -883,6 +918,7 @@ function voidSignatureFromMenu() {
 
 /** Menu: put a 寄送失敗 row back in the queue after the owner has checked why it failed. */
 function retrySendFromMenu() {
+  requireAdmin_();
   var ui = SpreadsheetApp.getUi();
   var a = ui.prompt('重新寄出寄送失敗的報價', '輸入簽署ID（sig_ 開頭）。\n若備註寫「寄送中斷」，請先到寄件備份確認信沒有寄出，以免客戶收到兩封。', ui.ButtonSet.OK_CANCEL);
   if (a.getSelectedButton() !== ui.Button.OK) return;

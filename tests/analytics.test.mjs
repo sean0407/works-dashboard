@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { derive, makePeriod, parseDate, compare, applyRefresh } from '../lib/domain/analytics.ts';
+import { derive, makePeriod, parseDate, compare, applyRefresh, money } from '../lib/domain/analytics.ts';
 const base = () => ({ clients:[],cases:[],quotes:[],quoteItems:[],invoices:[],invoiceSchedule:[],receipts:[],allocations:[],tasks:[],documents:[],reconciliation:[],settings:[] });
 const c = (more={}) => ({id:'c1',number:'A001',title:'測試案',mode:'歷史',confirmed:true,clientId:'u1',...more});
 const i = (more={}) => ({id:'i1',number:'TEST0001',caseId:'c1',date:'2026-11-02',gross:1050,net:1000,tax:50,taxConfirmed:true,status:'有效',...more});
@@ -13,8 +13,8 @@ test('duplicate invoice numbers cannot inflate turnover; unknown tax never becom
  const d=base();d.cases=[c()];d.invoices=[i({net:null,tax:null,taxConfirmed:false}),i({id:'duplicate'})];const a=derive(d,all);
  assert.equal(a.metrics.invoiceNet,null);assert.equal(a.metrics.invoiceCount,1);assert.ok(a.issues.some(x=>x.type==='duplicate_invoice'));
 });
-test('same A280 number stays distinct and unconfirmed relationships are excluded from certified rate',()=>{
- const d=base();d.cases=[c({id:'a',number:'A280',confirmed:false}),c({id:'b',number:'A280',confirmed:false})];d.invoices=[i({caseId:'a'}),i({id:'i2',number:'TEST0002',caseId:'b'})];const a=derive(d,all);
+test('same A780 number stays distinct and unconfirmed relationships are excluded from certified rate',()=>{
+ const d=base();d.cases=[c({id:'a',number:'A780',confirmed:false}),c({id:'b',number:'A780',confirmed:false})];d.invoices=[i({caseId:'a'}),i({id:'i2',number:'TEST0002',caseId:'b'})];const a=derive(d,all);
  assert.equal(a.cases.length,2);assert.equal(a.metrics.wonCount,0);assert.equal(a.metrics.ambiguousCount,2);assert.equal(a.metrics.winRate,null);
 });
 test('addition retains sold amount but is not another original opportunity or customer',()=>{
@@ -96,4 +96,26 @@ test('pending financial amount uses quote-date period while current pending coun
 test('fully invoiced new case closes independently of invalid receipt allocations',()=>{
  const d=base();d.cases=[c({mode:'新案',signedSourceId:'signed',decisionDate:'2026-11-01',expectedInvoiceGross:1050,receiptVerified:true})];d.documents=[{id:'signed'}];d.invoices=[i()];d.invoiceSchedule=[{id:'milestone',caseId:'c1',invoiceId:'i1',expectedGross:1050,confirmed:true}];d.receipts=[{id:'receipt',amount:500,date:'2026-11-02',verified:true}];d.allocations=[{id:'allocation',caseId:'c1',invoiceId:'i1',receiptId:'receipt',amount:600}];
  const a=derive(d,all);assert.equal(a.cases[0].closed,true);assert.equal(a.invoices[0].balance,null);assert.ok(a.issues.some(issue=>issue.type==='allocation'));
+});
+
+test('a blank or spaces-only amount is unknown, never 0',()=>{
+ assert.equal(money('  '),null);assert.equal(money(''),null);assert.equal(money(' 1,200 '),1200);assert.equal(money(0),0);assert.equal(money('abc'),null);
+});
+test('a text date in m/d/yyyy form is read; an impossible one is still rejected',()=>{
+ assert.equal(parseDate('6/3/2026'),'2026-06-03');assert.equal(parseDate('11/21/2026'),'2026-11-21');
+ assert.equal(parseDate('2/30/2026'),null);assert.equal(parseDate('13/1/2026'),null);
+});
+test('losing access to the sheet clears the data on screen; a network blip keeps it as stale',()=>{
+ const prev={data:{cases:[{id:'a'}]},loadedAt:'2026-11-14T01:00:00Z',stale:false};
+ for(const status of ['access_denied','reauthentication_required']){const next=applyRefresh(prev,{status,message:'x'});assert.equal(next.data,undefined);assert.equal(next.error.status,status);}
+ assert.deepEqual(applyRefresh(prev,{status:'network_error'}).data,prev.data);
+});
+test('an undated quote added by the PDF importer does not unseat the dated version of the same case',()=>{
+ const d=base();d.cases=[c({mode:'新案'})];
+ d.quotes=[{id:'q1',caseId:'c1',date:'2026-03-01',net:100,version:'V0'},{id:'q2',caseId:'c1',date:null,net:null,notes:'自動匯入：讀不出金額，請對照原件填入'}];
+ const a=derive(d,{period:makePeriod('year','2026-01-01','2026-11-14'),today:'2026-11-14'});
+ assert.equal(a.metrics.quotedCount,1);assert.equal(a.metrics.quotedNet,100);
+ assert.ok(a.pendingImportIds.has('q2'));assert.ok(a.issues.some(x=>x.type==='import_review'));
+ // A person-entered undated quote still blocks the case until someone fixes it.
+ d.quotes[1].notes='手動';assert.equal(derive(d,all).latestQuotes[0].quote,null);
 });

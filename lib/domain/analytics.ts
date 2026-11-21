@@ -17,13 +17,19 @@ export const text = (v: unknown) => v == null ? '' : String(v);
 export const yes = (v: unknown) => v === true || v === '是';
 export const money = (v: unknown,allowNegative=false): number | null => {
   if (v === null || v === undefined || v === '' || typeof v === 'boolean') return null;
-  const n = typeof v === 'number' ? v : Number(String(v).replace(/,/g, ''));
+  // A blank or spaces-only cell is unknown, never 0 (Number('  ') is 0).
+  const raw = typeof v === 'number' ? '' : String(v).replace(/,/g, '').trim();
+  if (typeof v !== 'number' && !raw) return null;
+  const n = typeof v === 'number' ? v : Number(raw);
   return Number.isFinite(n) && (allowNegative || n >= 0) ? n : null;
 };
 export function parseDate(value: unknown): string | null {
   if (typeof value === 'number' && Number.isFinite(value) && value > 0 && value < 150000) return new Date(Date.UTC(1899, 11, 30) + Math.floor(value) * 86400000).toISOString().slice(0, 10);
   if (typeof value !== 'string') return null;
-  const s = value.trim();
+  let s = value.trim();
+  // A date typed as text in Sheets' m/d/yyyy form; the calendar check below still rejects 2/30.
+  const us = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s);
+  if (us) s = `${us[3]}-${us[1].padStart(2,'0')}-${us[2].padStart(2,'0')}`;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
   const d = new Date(s + 'T00:00:00Z');
   return !Number.isNaN(d.valueOf()) && d.toISOString().slice(0, 10) === s ? s : null;
@@ -55,9 +61,15 @@ const completeSum = (values: (number|null)[]) => values.some(v=>v===null) ? null
 export function compare(current: number|null, previous: number|null, covered: boolean): number|null {
   return !covered || current===null || previous===null || previous===0 ? null : (current-previous)/previous*100;
 }
+/** Google said this account may no longer read the sheet: the copy on screen must go, not linger as stale data. */
+const ACCESS_LOST=['access_denied','reauthentication_required','authentication_required'];
 export function applyRefresh(previous: any, response: any): any {
-  return response.status === 'success' && response.data ? {data:response.data,loadedAt:response.loadedAt,stale:false,error:null,links:response.links} : {...previous,stale:!!previous.data,error:response};
+  if (response.status === 'success' && response.data) return {data:response.data,loadedAt:response.loadedAt,stale:false,error:null,links:response.links};
+  if (ACCESS_LOST.includes(response.status)) return {error:response};
+  return {...previous,stale:!!previous.data,error:response};
 }
+/** Rows the Apps Script importer added (備註 starts with 自動匯入) that still have no 報價日. */
+export const isPendingImport=(q:Row)=>text(q.notes).trim().startsWith('自動匯入')&&!parseDate(q.date);
 /** Select before filtering by period: an obsolete quote never returns as current. */
 const complementaryBundle=(quotes:Row[])=>quotes.length>1&&new Set(quotes.map(q=>q.caseId)).size===1&&!!text(quotes[0].groupId)&&!!parseDate(quotes[0].date)&&new Set(quotes.map(q=>q.groupId)).size===1&&new Set(quotes.map(q=>q.version)).size===1&&new Set(quotes.map(q=>parseDate(q.date))).size===1&&quotes.every(q=>q.role==='互補'&&yes(q.effective))&&new Set(quotes.map(q=>q.id)).size===quotes.length;
 export function selectLatestQuotes(quotes: Row[], issues: Issue[],caseNumbers=new Map<string,string>()) {
@@ -84,9 +96,17 @@ export function selectLatestQuotes(quotes: Row[], issues: Issue[],caseNumbers=ne
     return {number,caseId,caseIds,quote,quotes:selected,date,net:quote?completeSum(selected.map(q=>money(q.net))):null};
   });
 }
+/** Rows grouped by one field's raw value (same matching as ===). */
+const groupBy=(list:Row[],key:string)=>{const m=new Map<Cell,Row[]>();for(const r of list){const k=r[key];const g=m.get(k);if(g)g.push(r);else m.set(k,[r]);}return m;};
+/** First row per raw value of one field, as Array.find would return it. */
+const firstBy=<T extends Row>(list:T[],key:string)=>{const m=new Map<Cell,T>();for(const r of list)if(!m.has(r[key]))m.set(r[key],r);return m;};
 export function derive(data: Dataset, filters: Filters) {
   const rows = (k: string) => data[k] ?? [];
   const issues: Issue[] = [];
+  // Lookups by id are indexed once; matching per case over every list made each refresh grow with cases × rows.
+  const documentIds=new Set(rows('documents').map(d=>d.id));
+  const quotesByCase=groupBy(rows('quotes'),'caseId');
+  const schedulesByCase=groupBy(rows('invoiceSchedule'),'caseId');
   const unique = (items: Row[], key: string, type: string, report=true) => {
     const found=new Set<string>();return items.filter(r=>{
       const id=text(r[key] || r.id);if(!id || found.has(id)){if(report)issues.push({type,caseId:text(r.caseId),description:`重複或缺少識別碼：${id || '空白'}，未重複加總。`});return false;}found.add(id);return true;
@@ -97,15 +117,19 @@ export function derive(data: Dataset, filters: Filters) {
   for(const invoice of allInvoices)if(!INVOICE_STATUSES.includes(text(invoice.status)))issues.push({type:'invalid_value',caseId:text(invoice.caseId),description:`發票 ${text(invoice.number)||text(invoice.id)} 的發票狀態「${text(invoice.status)||'空白'}」無法辨識（應為有效或作廢），未計入開票金額。`});
   const validInvoices = allInvoices.filter(r=>r.status==='有效');
   const sourceCases = unique(rows('cases'),'id','duplicate_case');
+  const sourceCaseIds=new Set(sourceCases.map(c=>c.id));
+  const validByCase=groupBy(validInvoices,'caseId');
   for(const c of sourceCases){
     if(c.status!=null&&!CASE_STATUSES.includes(text(c.status)))issues.push({type:'invalid_value',caseId:text(c.id),description:`${text(c.number)} 的商機狀態「${text(c.status)}」無法辨識，請改用下拉選項。`});
     if(c.mode!=null&&!CASE_MODES.includes(text(c.mode)))issues.push({type:'invalid_value',caseId:text(c.id),description:`${text(c.number)} 的「歷史或新案」填寫「${text(c.mode)}」無法辨識，目前視為新案。`});
   }
-  for(const invoice of validInvoices)if(!sourceCases.some(c=>c.id===invoice.caseId))issues.push({type:'case_reference',description:`發票 ${text(invoice.number)} 尚未連結有效案件；保留在整體財務，請確認案件關聯。`});
-  for(const q of rows('quotes'))if(!sourceCases.some(c=>c.id===q.caseId))issues.push({type:'quote_reference',description:`報價 ${text(q.id)}${q.title?`（${text(q.title)}）`:''} 的案件ID「${text(q.caseId)||'空白'}」找不到對應案件，未計入報價金額。`});
+  for(const invoice of validInvoices)if(!sourceCaseIds.has(invoice.caseId))issues.push({type:'case_reference',description:`發票 ${text(invoice.number)} 尚未連結有效案件；保留在整體財務，請確認案件關聯。`});
+  for(const q of rows('quotes'))if(!sourceCaseIds.has(q.caseId))issues.push({type:'quote_reference',description:`報價 ${text(q.id)}${q.title?`（${text(q.title)}）`:''} 的案件ID「${text(q.caseId)||'空白'}」找不到對應案件，未計入報價金額。`});
   const clients = new Map(rows('clients').map(r=>[text(r.id),r]));
   const receipts = unique(rows('receipts'),'id','duplicate_receipt');
   const allocations = unique(rows('allocations'),'id','duplicate_allocation');
+  const receiptById=firstBy(receipts,'id'),invoiceById=firstBy(allInvoices,'id');
+  const allocationsByReceipt=groupBy(allocations,'receiptId'),allocationsByInvoice=groupBy(allocations,'invoiceId');
   const invalidInvoice = new Set<string>(); const invalidReceipt = new Set<string>();
   const ambiguousInvoiceIdentity = new Set<string>();
   const invoiceIdCounts=new Map<string,number>(),invoiceNumberCounts=new Map<string,number>();
@@ -123,30 +147,32 @@ export function derive(data: Dataset, filters: Filters) {
     }
   }
   for(const a of allocations){
-    const r=receipts.find(r=>r.id===a.receiptId),inv=allInvoices.find(i=>i.id===a.invoiceId);
+    const r=receiptById.get(a.receiptId),inv=invoiceById.get(a.invoiceId);
     if(!r||!inv||money(a.amount)===null|| (a.caseId && a.caseId!==inv.caseId)){
       invalidInvoice.add(text(a.invoiceId));invalidReceipt.add(text(a.receiptId));issues.push({type:'allocation',caseId:text(a.caseId),description:'收款分配的關聯或金額無效，應收餘額暫不認定。'});
     }
   }
   for(const r of receipts){
-    const allocated=sumKnown(allocations.filter(a=>a.receiptId===r.id).map(a=>money(a.amount)));
-    if(money(r.amount)===null || allocated>(money(r.amount)??0)+0.01){invalidReceipt.add(text(r.id));allocations.filter(a=>a.receiptId===r.id).forEach(a=>invalidInvoice.add(text(a.invoiceId)));issues.push({type:'allocation',description:'分配金額超過實收或實收金額未確認。'});}
+    const mine=allocationsByReceipt.get(r.id)??[];
+    const allocated=sumKnown(mine.map(a=>money(a.amount)));
+    if(money(r.amount)===null || allocated>(money(r.amount)??0)+0.01){invalidReceipt.add(text(r.id));mine.forEach(a=>invalidInvoice.add(text(a.invoiceId)));issues.push({type:'allocation',description:'分配金額超過實收或實收金額未確認。'});}
   }
   for(const inv of allInvoices){
-    if(sumKnown(allocations.filter(a=>a.invoiceId===inv.id).map(a=>money(a.amount)))>(money(inv.gross)??Infinity)+0.01){invalidInvoice.add(text(inv.id));issues.push({type:'allocation',caseId:text(inv.caseId),description:'發票分配超過含稅金額，餘額暫不認定。'});}
+    if(sumKnown((allocationsByInvoice.get(inv.id)??[]).map(a=>money(a.amount)))>(money(inv.gross)??Infinity)+0.01){invalidInvoice.add(text(inv.id));issues.push({type:'allocation',caseId:text(inv.caseId),description:'發票分配超過含稅金額，餘額暫不認定。'});}
   }
   const caseList: DerivedCase[] = sourceCases.map(c=>{
-    const invoices=validInvoices.filter(i=>i.caseId===c.id);
+    const invoices=validByCase.get(c.id)??[];
     const historical=c.mode==='歷史';
     const dates=invoices.map(i=>parseDate(i.date)).filter((d):d is string=>!!d).sort();
-    const signed=!!c.signedSourceId && rows('documents').some(d=>d.id===c.signedSourceId) && !!parseDate(c.decisionDate);
+    const signed=!!c.signedSourceId && documentIds.has(c.signedSourceId) && !!parseDate(c.decisionDate);
     const won=historical ? invoices.length>0 : signed;
     const lost=!won && ['未成交','取消'].includes(text(c.status));
     const saleDate=won ? historical ? dates[0]??null : parseDate(c.decisionDate) : parseDate(c.decisionDate);
-    const effective=rows('quotes').filter(q=>q.caseId===c.id&&yes(q.effective));
+    const caseQuotes=quotesByCase.get(c.id)??[];
+    const effective=caseQuotes.filter(q=>yes(q.effective));
     const latestQuoteDate=effective.map(q=>parseDate(q.date)).filter((d):d is string=>!!d).sort().at(-1);
     const revisionDate=parseDate(c.revisionSignedDate);
-    const revisionDocument=!!c.revisionSignedSourceId&&c.revisionSignedSourceId!==c.signedSourceId&&rows('documents').some(d=>d.id===c.revisionSignedSourceId);
+    const revisionDocument=!!c.revisionSignedSourceId&&c.revisionSignedSourceId!==c.signedSourceId&&documentIds.has(c.revisionSignedSourceId);
     const needsRevision=!historical&&signed&&!!latestQuoteDate&&latestQuoteDate>parseDate(c.decisionDate)!;
     const resign=needsRevision&&!(revisionDocument&&revisionDate&&revisionDate>=latestQuoteDate!);
     if(resign)issues.push({type:'resign',caseId:text(c.id),description:'有效報價晚於原成交日；請填最新改版簽回日及獨立簽回文件，保留原成交決策日與原簽回文件。'});
@@ -156,7 +182,7 @@ export function derive(data: Dataset, filters: Filters) {
     // Actual valid invoice net replaces contract snapshots for sales analysis.
     const saleNet = invoices.length?completeSum(invoices.map(i=>money(i.net))):null;
     const expected=money(c.expectedInvoiceGross);
-    const schedules=rows('invoiceSchedule').filter(s=>s.caseId===c.id);
+    const schedules=schedulesByCase.get(c.id)??[];
     const milestoneTotal=completeSum(schedules.map(s=>money(s.expectedGross)));
     const invoiceTotal=completeSum(invoices.map(i=>money(i.gross)));
     const milestoneInvoiceIds=schedules.map(s=>text(s.invoiceId));
@@ -169,7 +195,7 @@ export function derive(data: Dataset, filters: Filters) {
     if(unverifiedWon)issues.push({type:'won_evidence',caseId:text(c.id),description:historical?`${text(c.number)} 商機狀態為已成交，但尚無有效發票；未計入成交，也不列入待成交。`:`${text(c.number)} 商機狀態為已成交，但缺少可辨識的簽回文件ID或成交決策日；未計入成交，也不列入待成交。`});
     if(won&&!saleDate)issues.push({type:'sale_date',caseId:text(c.id),description:'成交依據已存在，但沒有有效日期；無法歸入指定期間。'});
     // 結案 follows the owner's manual 結案狀態 only; the other stages follow the evidence in the sheet.
-    const hasQuote=rows('quotes').some(q=>q.caseId===c.id)||text(c.status)==='已報價待確認';
+    const hasQuote=caseQuotes.length>0||text(c.status)==='已報價待確認';
     const stage:CaseStage=lost?'未成交':text(c.closureStatus)==='已結案'?'結案':invoices.length?'開票':(won||unverifiedWon)?'成交':hasQuote?'報價':'提案';
     const stageFlag=unverifiedWon&&stage==='成交'?'成交依據待核對':null;
     const invoicedGross=invoices.length?sumKnown(invoices.map(i=>money(i.gross))):null;
@@ -194,15 +220,22 @@ export function derive(data: Dataset, filters: Filters) {
   const pending=cases.filter(c=>!c.won&&!c.lost&&!c.unverifiedWon&&!c.parentId);
   const caseScoped=!!(filters.brand||filters.status||filters.search||filters.activity);
   const caseNumbers=new Map(sourceCases.map(c=>[text(c.id),text(c.number).trim()]));
-  const latestQuotes=selectLatestQuotes(rows('quotes').filter(q=>caseNumbers.has(text(q.caseId))),issues,caseNumbers).filter(q=>q.caseIds.some(id=>ids.has(id)));
+  // A scanned quote the importer could not date must not unseat a dated version of the same case; it waits for a person.
+  const importPending=rows('quotes').filter(q=>caseNumbers.has(text(q.caseId))&&isPendingImport(q));
+  for(const q of importPending)issues.push({type:'import_review',caseId:text(q.caseId),description:`報價「${text(q.title)||text(q.id)}」由 PDF 自動匯入但沒有報價日，暫不參與最新版本判定；請對照原件補上報價日與金額。`});
+  const pendingImportIds=new Set(importPending.map(q=>text(q.id)));const pendingRows=new Set(importPending);
+  const latestQuotes=selectLatestQuotes(rows('quotes').filter(q=>caseNumbers.has(text(q.caseId))&&!pendingRows.has(q)),issues,caseNumbers).filter(q=>q.caseIds.some(id=>ids.has(id)));
   const quoted=latestQuotes.filter(q=>inPeriod(q.date,period));
-  const pendingQuoted=quoted.filter(q=>cases.some(c=>q.caseIds.includes(text(c.id))&&!c.won&&!c.lost&&!c.unverifiedWon));
+  const openCaseIds=new Set(cases.filter(c=>!c.won&&!c.lost&&!c.unverifiedWon).map(c=>text(c.id)));
+  const pendingQuoted=quoted.filter(q=>q.caseIds.some(id=>openCaseIds.has(id)));
   const quotedAmounts=quoted.map(q=>q.net),pendingAmounts=pendingQuoted.map(q=>q.net);
-  const invoices:DerivedInvoice[]=validInvoices.filter(i=>(!caseScoped||dimensionIds.has(i.caseId))&&inPeriod(i.date,period)&&(!filters.clientId||(i.clientId||caseList.find(c=>c.id===i.caseId)?.clientId)===filters.clientId)).map(i=>{
-    const assigned=allocations.filter(a=>a.invoiceId===i.id);
-    const paid=completeSum(assigned.filter(a=>receipts.some(r=>r.id===a.receiptId&&yes(r.verified)&&!invalidReceipt.has(text(r.id)))).map(a=>money(a.amount)));
-    const verified=yes(i.receiptVerified)||yes(caseList.find(c=>c.id===i.caseId)?.receiptVerified);
-    const allVerified=assigned.every(a=>receipts.some(r=>r.id===a.receiptId&&yes(r.verified)&&!invalidReceipt.has(text(r.id))));
+  const caseById=firstBy(caseList,'id');
+  const invoices:DerivedInvoice[]=validInvoices.filter(i=>(!caseScoped||dimensionIds.has(i.caseId))&&inPeriod(i.date,period)&&(!filters.clientId||(i.clientId||caseById.get(i.caseId)?.clientId)===filters.clientId)).map(i=>{
+    const assigned=allocationsByInvoice.get(i.id)??[];
+    const goodReceipt=(a:Row)=>{const r=receiptById.get(a.receiptId);return !!r&&yes(r.verified)&&!invalidReceipt.has(text(r.id));};
+    const paid=completeSum(assigned.filter(goodReceipt).map(a=>money(a.amount)));
+    const verified=yes(i.receiptVerified)||yes(caseById.get(i.caseId)?.receiptVerified);
+    const allVerified=assigned.every(goodReceipt);
     const gross=money(i.gross);const balance=verified&&allVerified&&!invalidInvoice.has(text(i.id))&&gross!==null&&paid!==null ? gross-paid : null;
     const overdue=balance!==null&&balance>0&&yes(i.dueConfirmed)&&!!parseDate(i.dueDate)&&parseDate(i.dueDate)!<filters.today;
     return {...i,balance,paid:assigned.length&&!invalidInvoice.has(text(i.id))?paid:null,overdue} as DerivedInvoice;
@@ -213,7 +246,7 @@ export function derive(data: Dataset, filters: Filters) {
   const invoiceNets=invoices.map(i=>money(i.net));
   const totalDecisions=originalWon.length+lost.length;
   const rankMap=new Map<string,{clientId:string;name:string;net:number;count:number;unknown:number;knownCount:number;projectIds:Set<string>}>();
-  for(const invoice of invoices){const c=caseList.find(c=>c.id===invoice.caseId);const id=text(invoice.clientId||c?.clientId);const r=rankMap.get(id)??{clientId:id,name:text(clients.get(id)?.name)||'客戶未確認',net:0,count:0,unknown:0,knownCount:0,projectIds:new Set<string>()};const net=money(invoice.net);r.net+=net??0;r.unknown+=net===null?1:0;r.knownCount+=net===null?0:1;if(c)r.projectIds.add(text(c.parentId||c.id));r.count=r.projectIds.size;rankMap.set(id,r);}
+  for(const invoice of invoices){const c=caseById.get(invoice.caseId);const id=text(invoice.clientId||c?.clientId);const r=rankMap.get(id)??{clientId:id,name:text(clients.get(id)?.name)||'客戶未確認',net:0,count:0,unknown:0,knownCount:0,projectIds:new Set<string>()};const net=money(invoice.net);r.net+=net??0;r.unknown+=net===null?1:0;r.knownCount+=net===null?0:1;if(c)r.projectIds.add(text(c.parentId||c.id));r.count=r.projectIds.size;rankMap.set(id,r);}
   const ranking=[...rankMap.values()].sort((a,b)=>b.net-a.net);
   const relevantTasks=rows('tasks').filter(t=>ids.has(t.caseId)&&!['完成','取消'].includes(text(t.status)));
   const followups=[...relevantTasks.map(t=>({id:text(t.id),caseId:text(t.caseId),title:text(t.title),date:parseDate(t.dueDate),kind:'待辦'})),...cases.filter(c=>c.nextFollowupDate||c.nextAction).map(c=>({id:`follow-${c.id}`,caseId:text(c.id),title:text(c.nextAction)||'確認案件下一步',date:parseDate(c.nextFollowupDate),kind:'追案'}))].sort((a,b)=>(a.date??'9999').localeCompare(b.date??'9999'));
@@ -225,7 +258,7 @@ export function derive(data: Dataset, filters: Filters) {
   filteredReceipts.forEach((r,index)=>{const p=point(r.date);if(p){p.receipts+=receiptAmounts[index]??0;p.receiptsKnownCount+=receiptAmounts[index]===null?0:1;}});
   const scopedIssues=issues.filter(x=>!x.caseId||ids.has(x.caseId));
   const reconciliation=rows('reconciliation').filter(r=>(!r.caseId||ids.has(r.caseId))&&!['已解決','完成','已確認'].includes(text(r.status)));
-  return {cases,invoices,won,pending,latestQuotes,ranking,followups,issues:scopedIssues,reconciliation,trends:[...trends.values()].sort((a,b)=>a.month.localeCompare(b.month)),
+  return {cases,invoices,won,pending,latestQuotes,pendingImportIds,ranking,followups,issues:scopedIssues,reconciliation,trends:[...trends.values()].sort((a,b)=>a.month.localeCompare(b.month)),
     metrics:{quotedNet:completeSum(quotedAmounts),knownQuotedNet:sumKnown(quotedAmounts),quotedCount:quoted.length,unknownQuotedCount:quotedAmounts.filter(v=>v===null).length,pendingQuotedCount:pendingQuoted.length,unknownPendingCount:pendingAmounts.filter(v=>v===null).length,wonCount:originalWon.length,lostCount:lost.length,pendingCount:pending.length,pendingNet:completeSum(pendingAmounts),knownPendingNet:sumKnown(pendingAmounts),ambiguousCount:cases.filter(c=>!c.certified&&!c.parentId).length,winRate:totalDecisions?originalWon.length/totalDecisions*100:null,wonNet:completeSum(won.map(c=>c.saleNet)),knownWonNet:sumKnown(won.map(c=>c.saleNet)),unknownWonCount:won.filter(c=>c.saleNet===null).length,invoiceNet:completeSum(invoiceNets),knownInvoiceNet:sumKnown(invoiceNets),invoiceCount:invoices.length,invoiceGross:completeSum(invoices.map(i=>money(i.gross))),receiptsGross:filteredReceipts.length?completeSum(receiptAmounts):null,receiptCount:filteredReceipts.length,outstandingGross:invoices.length?completeSum(invoices.map(i=>i.balance)):null,knownOutstandingGross:sumKnown(invoices.map(i=>i.balance)),unknownReceiptCount:invoices.filter(i=>i.balance===null).length,overdueGross:sumKnown(invoices.filter(i=>i.overdue).map(i=>i.balance)),closedCount:cases.filter(c=>c.closed).length},
     taxUnconfirmedCount:invoices.filter(i=>!yes(i.taxConfirmed)).length,
     coverage:{start:parseDate(rows('settings').find(r=>r.key==='coverage_start')?.value),end:parseDate(rows('settings').find(r=>r.key==='coverage_end')?.value)},

@@ -21,16 +21,16 @@ test('script headers match the dashboard schema for 文件',()=>{
 });
 
 test('kind and case number are guessed from file and folder names',()=>{
- assert.equal(guessKind('A280 活動報價單 V2.pdf'),'報價單');
+ assert.equal(guessKind('A780 活動報價單 V2.pdf'),'報價單');
  assert.equal(guessKind('Quotation_final.pdf'),'報價單');
  assert.equal(guessKind('AB12345678.pdf'),'發票');
  assert.equal(guessKind('scan001.pdf','發票'),'發票');
  assert.equal(guessKind('合約.pdf','雜項'),'其他');
- assert.equal(guessCaseNumber('A280 活動報價單.pdf'),'A280');
+ assert.equal(guessCaseNumber('A780 活動報價單.pdf'),'A780');
  assert.equal(guessCaseNumber('報價_A076_v1.pdf'),'A076');
  assert.equal(guessCaseNumber('QA12345678.pdf'),'','an invoice number is not a case number');
- assert.equal(guessCaseNumber('scan.pdf','A301 春季活動'),'A301');
- assert.equal(guessCaseNumber('A2801.pdf'),'');
+ assert.equal(guessCaseNumber('scan.pdf','A791 春季活動'),'A791');
+ assert.equal(guessCaseNumber('A7801.pdf'),'');
 });
 
 test('document ID is stable per Drive file',()=>{
@@ -44,14 +44,14 @@ test('document ID is stable per Drive file',()=>{
 
 test('new files become review rows; linked files are skipped',()=>{
  const linked=blank();linked[headers.indexOf('文件連結')]='https://drive.google.com/file/d/fileAAAAAAAAAA/view';
- const plan=planChanges(headers,[linked],[file('fileAAAAAAAAAA','old.pdf'),file('fileBBBBBBBBBB','A301 報價單.pdf'),file('fileBBBBBBBBBB','A301 報價單.pdf')]);
+ const plan=planChanges(headers,[linked],[file('fileAAAAAAAAAA','old.pdf'),file('fileBBBBBBBBBB','A791 報價單.pdf'),file('fileBBBBBBBBBB','A791 報價單.pdf')]);
  assert.equal(plan.skipped,2);
  assert.equal(plan.update.length,0);
  assert.equal(plan.append.length,1);
  const row=plan.append[0];
  assert.equal(at(row,'文件ID'),'doc_fileBBBBBBBBBB');
  assert.equal(at(row,'文件類型'),'報價單');
- assert.equal(at(row,'原案號'),'A301');
+ assert.equal(at(row,'原案號'),'A791');
  assert.equal(at(row,'SHA256'),'sha-fileBBBBBBBBBB');
  assert.equal(at(row,'核對狀態'),'待核對');
  assert.match(at(row,'待核對事項'),/自動匯入/);
@@ -59,8 +59,8 @@ test('new files become review rows; linked files are skipped',()=>{
 });
 
 test('an existing row with the same file name and no link gets the link, not a duplicate',()=>{
- const old=blank();old[headers.indexOf('文件ID')]='doc_legacy';old[headers.indexOf('原始檔名')]='A276 報價單.pdf';old[headers.indexOf('文件類型')]='報價單';old[headers.indexOf('備註')]='手動登記';
- const plan=planChanges(headers,[blank(),old],[file('fileCCCCCCCCCC','A276 報價單.pdf')]);
+ const old=blank();old[headers.indexOf('文件ID')]='doc_legacy';old[headers.indexOf('原始檔名')]='A776 報價單.pdf';old[headers.indexOf('文件類型')]='報價單';old[headers.indexOf('備註')]='手動登記';
+ const plan=planChanges(headers,[blank(),old],[file('fileCCCCCCCCCC','A776 報價單.pdf')]);
  assert.equal(plan.append.length,0);
  assert.equal(plan.update.length,1);
  assert.equal(plan.update[0].row,3,'sheet row number = data index + 2');
@@ -68,7 +68,7 @@ test('an existing row with the same file name and no link gets the link, not a d
  assert.equal(at(v,'文件ID'),'doc_legacy','keeps the existing ID');
  assert.equal(at(v,'備註'),'手動登記','keeps filled cells');
  assert.match(at(v,'文件連結'),/fileCCCCCCCCCC/);
- assert.equal(at(v,'原案號'),'A276','fills only blank cells');
+ assert.equal(at(v,'原案號'),'A776','fills only blank cells');
 });
 
 test('headers are matched by name, so reordered columns still line up',()=>{
@@ -81,17 +81,17 @@ test('headers are matched by name, so reordered columns still line up',()=>{
 });
 
 test('quote and invoice folders fix the document kind regardless of file name',()=>{
- const plan=planChanges(headers,[],[{...file('fileEEEEEEEEEE','scan_0012.pdf','2025'),kind:'發票'},{...file('fileFFFFFFFFFF','A283 2026 活動.pdf','2026'),kind:'報價單'}]);
+ const plan=planChanges(headers,[],[{...file('fileEEEEEEEEEE','scan_0012.pdf','2025'),kind:'發票'},{...file('fileFFFFFFFFFF','A783 2026 活動.pdf','2026'),kind:'報價單'}]);
  assert.equal(at(plan.append[0],'文件類型'),'發票');
  assert.equal(at(plan.append[1],'文件類型'),'報價單');
- assert.equal(at(plan.append[1],'原案號'),'A283');
+ assert.equal(at(plan.append[1],'原案號'),'A783');
 });
 
 test('folders are read from the 設定 sheet with their kinds',()=>{
  const values=[['設定項目','設定值','說明'],['timezone','Asia/Taipei',''],
-  ['quotes_folder_id','https://drive.google.com/drive/u/0/folders/1NLSl-o7ga47UaI8d86zdleJ8RUAtDVoD',''],
-  ['invoices_folder_id','https://drive.google.com/drive/u/0/folders/1e3FxLVymjCwRgFJo7DH4VNgbq1o70Zep','']];
- assert.deepEqual(JSON.parse(JSON.stringify(foldersFromSettings(values))),[{id:'1NLSl-o7ga47UaI8d86zdleJ8RUAtDVoD',kind:'報價單'},{id:'1e3FxLVymjCwRgFJo7DH4VNgbq1o70Zep',kind:'發票'}]);
+  ['quotes_folder_id','https://drive.google.com/drive/u/0/folders/1QuotesFolderExampleId000000000',''],
+  ['invoices_folder_id','https://drive.google.com/drive/u/0/folders/1InvoicesFolderExampleId00000000','']];
+ assert.deepEqual(JSON.parse(JSON.stringify(foldersFromSettings(values))),[{id:'1QuotesFolderExampleId000000000',kind:'報價單'},{id:'1InvoicesFolderExampleId00000000',kind:'發票'}]);
  assert.equal(foldersFromSettings([['設定項目','設定值']]).length,0);
 });
 
