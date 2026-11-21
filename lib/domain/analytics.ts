@@ -53,6 +53,12 @@ export function makePeriod(kind: string, anchor: string, today: string): Period 
   const previousEnd = end === fullEnd ? iso(new Date(previousStart).getUTCFullYear(),new Date(previousStart).getUTCMonth()+step,0) : shifted(end,-step);
   return {start,end,previous:{start:previousStart,end:previousEnd},label:step===12?`${y} 年`:step===3?`${y} 年 Q${month/3+1}`:`${y} 年 ${m} 月`};
 }
+/** Years the period picker offers: every year with a quote or invoice date, plus this year and next, newest first. */
+export function periodYears(data: {quotes?: Array<{date?: unknown}>; invoices?: Array<{date?: unknown}>} | undefined, today: string): number[] {
+  const set = new Set<number>([Number(today.slice(0,4)), Number(today.slice(0,4))+1]);
+  for (const row of [...(data?.quotes ?? []), ...(data?.invoices ?? [])]) { const d = parseDate(row.date); if (d) set.add(Number(d.slice(0,4))); }
+  return [...set].sort((x,y) => y-x);
+}
 export const inPeriod = (date: unknown,p: Period) => {
   const d = parseDate(date); return !p.start && !p.end ? true : !!d && (!p.start || d>=p.start) && (!p.end || d<=p.end);
 };
