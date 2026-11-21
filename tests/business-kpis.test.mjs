@@ -71,3 +71,45 @@ test('quotation and pending trend amounts match latest-only KPI totals; original
  const d={cases:[c('a',{mode:'新案'})],quotes:[q('old','a','2026-10-01',100),q('new','a','2026-11-01',200)]};const before=structuredClone(d);const a=derive(d,all);
  assert.equal(a.trends.reduce((s,p)=>s+p.quoted,0),200);assert.equal(a.trends.reduce((s,p)=>s+p.pending,0),200);assert.deepEqual(d,before);
 });
+
+test('an addition sharing its parent case number adds to the quote total instead of replacing the parent quote',()=>{
+ const d={cases:[c('p',{number:'X001',mode:'新案'}),c('add',{number:'X001',mode:'新案',parentId:'p'})],quotes:[q('qp','p','2026-03-01',100000),q('qa','add','2026-04-01',20000,{role:'追加'})]};
+ const a=derive(d,all);
+ assert.equal(a.metrics.quotedNet,120000);assert.equal(a.metrics.quotedCount,2);
+ assert.equal(a.latestQuotes.find(x=>x.caseId==='p').quote.id,'qp');
+});
+test('a dated quote added by the PDF importer waits for review instead of replacing the manual version',()=>{
+ const d={cases:[c('a',{number:'A001',mode:'新案'})],quotes:[q('manual','a','2026-03-01',100000,{version:'V1'}),q('auto','a','2026-03-05',999,{notes:'自動匯入：金額由 PDF 文字讀出，請對照原件後再採用'})]};
+ const a=derive(d,all);
+ assert.equal(a.metrics.quotedNet,100000);assert.ok(a.pendingImportIds.has('auto'));
+ assert.ok(a.issues.some(x=>x.type==='import_review'&&x.caseId==='a'));
+ d.quotes[1].notes='已核對';assert.equal(derive(d,all).metrics.quotedNet,999,'clearing the note lets the newer version count');
+});
+test('a voided invoice listed before its valid twin with the same number does not hide the valid one',()=>{
+ const d={cases:[c('a')],invoices:[inv('n','a',100,{id:'void',status:'作廢'}),inv('n','a',100,{id:'valid'})]};
+ assert.equal(derive(d,all).metrics.invoiceNet,100);
+ d.invoices.reverse();assert.equal(derive(d,all).metrics.invoiceNet,100);
+});
+test('an imported invoice still 待核對 is not counted and is reported as an import to review, not an unreadable value',()=>{
+ const d={cases:[c('a')],invoices:[inv('i1','a',100,{status:'待核對'})]};
+ const a=derive(d,all);
+ assert.equal(a.metrics.invoiceCount,0);
+ assert.ok(a.issues.some(x=>x.type==='import_review'));assert.ok(!a.issues.some(x=>x.type==='invalid_value'));
+});
+
+test('a 待核對 import sharing a number with a valid invoice is still listed for review',()=>{
+ const d={cases:[c('a')],invoices:[inv('n','a',100,{id:'valid'}),inv('n','a',100,{id:'imp',status:'待核對'})]};
+ const a=derive(d,all);
+ assert.equal(a.metrics.invoiceNet,100);assert.ok(a.issues.some(x=>x.type==='import_review'));
+});
+test('an unreviewed imported quote marked effective does not ask for a re-signed revision',()=>{
+ const d={cases:[c('a',{number:'A001',mode:'新案',signedSourceId:'s',decisionDate:'2026-03-01'})],documents:[{id:'s'}],quotes:[q('v1','a','2026-02-01',100,{effective:true}),q('auto','a','2026-04-01',90,{effective:true,notes:'自動匯入：請核對'})]};
+ const a=derive(d,all);
+ assert.ok(!a.issues.some(x=>x.type==='resign'));assert.ok(!a.issues.some(x=>x.type==='quote_versions'));
+});
+test('a 原案ID pointing to no case is flagged and its quote is not treated as an addition',()=>{
+ const d={cases:[c('o',{number:'X009',mode:'新案',parentId:'ghost'})],quotes:[q('qo','o','2026-03-01',100)]};
+ const a=derive(d,all);
+ assert.ok(a.issues.some(x=>x.type==='relationship'&&x.caseId==='o'&&/找不到/.test(x.description)));
+ assert.equal(a.metrics.quotedNet,100);
+});

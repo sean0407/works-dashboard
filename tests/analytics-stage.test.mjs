@@ -61,3 +61,8 @@ test('payment types summarise the case invoices in billing order',()=>{
  assert.equal(c.f.paymentTypes,'全款','voided invoices do not count');
  assert.equal(c.none.paymentTypes,'');
 });
+
+test('each case carries its valid-invoice net, signed or not, and null when a net is missing',()=>{
+ const s=stageOf([{id:'u',mode:'新案',confirmed:true},{id:'m',mode:'新案',confirmed:true}],{invoices:[inv('1','u',1050),inv('2','m',525,{net:null})]});
+ assert.equal(s.u.won,false);assert.equal(Math.round(s.u.invoicedNet),1000);assert.equal(s.m.invoicedNet,null);
+});

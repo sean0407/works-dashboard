@@ -21,7 +21,7 @@ test('all reads use fixed target and read-only action, appended row pages partic
   if(action==='get_spreadsheet_metadata')return {status:'success',result:{content:[],structuredContent:{sheets:Object.values(schema.collections).map(d=>({properties:{title:d.sheet,gridProperties:{rowCount:4,columnCount:40}}}))}}};
   visited.add(args.sheet_name);
   assert.equal(action,'get_spreadsheet_range');assert.equal(args.value_render_option,'UNFORMATTED_VALUE');const def=Object.values(schema.collections).find(s=>s.sheet===args.sheet_name);const keys=Object.keys(def.columns);const h=Object.values(def.columns);
-  if(args.range==='A1:A4')return {status:'success',result:{content:[],structuredContent:{values:[[h[0]],['row1'],[],['rowAfterGap']]}}};
+  if(args.range==='A1:B4')return {status:'success',result:{content:[],structuredContent:{values:[[h[0]],['row1'],[],['rowAfterGap']]}}};
   const row=id=>keys.map(k=>k==='id'||k==='key'?id:k==='value'?'test':'');return {status:'success',result:{content:[],structuredContent:{values:args.range.startsWith('A1:')?[h,row('row1')]:[[],row('rowAfterGap')]}}};};
  const a=await loadWorkbook(invoke,{spreadsheetId:'native_test_id'},{pageSize:2});assert.equal(a.status,'success');assert.equal(a.data.cases.length,2);assert.equal(a.data.cases[1].id,'rowAfterGap');assert.equal(calls,1+schema.sourceCollections.length*3);assert.deepEqual([...visited].sort(),['客戶','案件商機','報價版本','發票','收款','文件','設定','發包項目','報價明細備份'].sort());assert.equal(a.data.quoteItems.length,2);
 });
@@ -37,4 +37,29 @@ test('quoted correction line amounts may be signed while bank allocations cannot
 });
 test('changed sheet metadata fails before reading a wrong or excessive grid',async()=>{
  const r=await loadWorkbook(async()=>({status:'success',result:{content:[],structuredContent:{sheets:[]}}}),{spreadsheetId:'native_test_id'});assert.equal(r.status,'source_error');assert.match(r.message,/工作表/);
+});
+
+const meta=(skip=[])=>({status:'success',result:{content:[],structuredContent:{sheets:Object.values(schema.collections).filter(d=>!skip.includes(d.sheet)).map(d=>({properties:{title:d.sheet,gridProperties:{rowCount:3,columnCount:40}}}))}}});
+const reader=(rowsFor)=>async(connector,action,args)=>{
+ if(action==='get_spreadsheet_metadata')return rowsFor.meta;
+ const def=Object.values(schema.collections).find(s=>s.sheet===args.sheet_name),keys=Object.keys(def.columns),h=Object.values(def.columns);
+ const body=rowsFor[args.sheet_name]?.(keys,h)??[h];
+ const [a,b]=args.range.match(/\d+/g).map(Number);
+ const slice=args.range.startsWith('A1:B')?body.map(r=>[r[0]??'',r[1]??'']):body.slice(a-1,b);
+ return {status:'success',result:{content:[],structuredContent:{values:slice}}};
+};
+test('a workbook without the 報價明細備份 sheet still loads, with no quote items',async()=>{
+ const a=await loadWorkbook(reader({meta:meta(['報價明細備份'])}),{spreadsheetId:'native_test_id'});
+ assert.equal(a.status,'success');assert.deepEqual(a.data.quoteItems,[]);
+});
+test('a last row whose ID is blank is reported, not silently dropped',async()=>{
+ const rows={meta:meta(),'發票':(keys,h)=>[h,keys.map(k=>({id:'i1',number:'ZZ00000001'})[k]??''),keys.map(k=>({number:'ZZ00000002',net:1000})[k]??'')]};
+ const a=await loadWorkbook(reader(rows),{spreadsheetId:'native_test_id'});
+ assert.equal(a.status,'source_error');assert.match(a.message,/發票.*識別碼/);
+});
+
+test('an error names the physical sheet row even after blank rows',()=>{
+ const heads=Object.values(schema.collections.cases.columns),keys=Object.keys(schema.collections.cases.columns);
+ const row=o=>keys.map(k=>o[k]??'');
+ assert.throws(()=>parseSheet('cases',[heads,row({id:'c1'}),row({}),row({number:'X1'})]),/第 4 列缺少識別碼/);
 });

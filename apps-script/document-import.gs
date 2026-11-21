@@ -331,8 +331,10 @@ function planRecordRows(kind, headers, rows, docs, caseIds) {
 
 function toIso(value) {
   if (Object.prototype.toString.call(value) === '[object Date]') return isNaN(value.getTime()) ? null : isoDate(value.getFullYear(), value.getMonth() + 1, value.getDate());
-  var m = /^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})$/.exec(String(value || '').trim());
-  return m ? isoDate(m[1], m[2], m[3]) : null;
+  var s = String(value || '').trim(), m = /^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})$/.exec(s);
+  if (m) return isoDate(m[1], m[2], m[3]);
+  m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s); // m/d/yyyy, as the dashboard reads it
+  return m ? isoDate(m[3], m[1], m[2]) : null;
 }
 function addDaysIso(iso, days) {
   return new Date(Date.parse(iso + 'T00:00:00Z') + days * 86400000).toISOString().slice(0, 10);
@@ -341,8 +343,18 @@ function isCollected(value) {
   return value === true || ['是', '已收', '已收款', 'y', 'yes', 'v', '✓', 'true'].indexOf(String(value == null ? '' : value).trim().toLowerCase()) >= 0;
 }
 
-/** {followups, activities, overdue, overdueTotal} for one day, from the raw sheet values (header row first). */
-function buildDigest(caseValues, invoiceValues, today) {
+/**
+ * {followups, activities, overdue, overdueTotal, overdueUnknown} for one day, from the raw sheet values (header row first).
+ * Follow-ups use the dashboard's rule: a case is no longer waiting once it is lost or cancelled, signed back
+ * (簽回文件ID and 成交決策日), invoiced, or marked 已結案 — whatever 商機狀態 still says.
+ */
+function buildDigest(caseValues, invoiceValues, today, documentIds) {
+  var ih = invoiceValues[0].map(function (h) { return String(h).trim(); });
+  var v = function (row, name) { var i = ih.indexOf(name); return i < 0 ? '' : row[i]; };
+  var invoiced = new Set();
+  invoiceValues.slice(1).forEach(function (r) { if (String(v(r, '發票狀態') || '').trim() === '有效') invoiced.add(String(v(r, '案件ID') || '').trim()); });
+  // Without the 文件 list a signing document cannot be confirmed, so only invoices and 結案 settle a case.
+  var docs = documentIds || new Set();
   var ch = caseValues[0].map(function (h) { return String(h).trim(); });
   var c = function (row, name) { var i = ch.indexOf(name); return i < 0 ? '' : row[i]; };
   var numbers = {}, followups = [], activities = [], weekEnd = addDaysIso(today, 7);
@@ -351,24 +363,34 @@ function buildDigest(caseValues, invoiceValues, today) {
     var label = String(c(r, '原案號') || '') + ' ' + String(c(r, '案名') || '');
     numbers[id] = label;
     var status = String(c(r, '商機狀態') || '').trim(), next = toIso(c(r, '下次追案日'));
-    if (next && next <= today && ['已成交', '未成交', '取消'].indexOf(status) < 0) followups.push({ label: label, date: next, action: String(c(r, '下一步') || '') });
+    var signedId = String(c(r, '簽回文件ID') || '').trim(), signed = !!signedId && docs.has(signedId) && !!toIso(c(r, '成交決策日'));
+    var settled = ['已成交', '未成交', '取消'].indexOf(status) >= 0 || signed || invoiced.has(id) || String(c(r, '結案狀態') || '').trim() === '已結案';
+    if (next && next <= today && !settled) followups.push({ label: label, date: next, action: String(c(r, '下一步') || '') });
     var start = toIso(c(r, '活動開始日')), end = toIso(c(r, '活動結束日')) || start;
     if (start && ['未成交', '取消'].indexOf(status) < 0 && end >= today && start <= weekEnd) activities.push({ label: label, start: start, end: end });
   });
-  var ih = invoiceValues[0].map(function (h) { return String(h).trim(); });
-  var v = function (row, name) { var i = ih.indexOf(name); return i < 0 ? '' : row[i]; };
   var overdue = [];
   invoiceValues.slice(1).forEach(function (r) {
     if (String(v(r, '發票狀態') || '').trim() !== '有效' || isCollected(v(r, '已收款'))) return;
-    var gross = Number(String(v(r, '含稅總額') || '').replace(/,/g, '')), issued = toIso(v(r, '開票日'));
-    var due = toIso(v(r, '收款到期日')) || (issued ? addDaysIso(issued, DEFAULT_TERM_DAYS) : null);
-    if (!due || due >= today || !isFinite(gross) || gross <= 0) return;
+    var issued = toIso(v(r, '開票日')), due = toIso(v(r, '收款到期日')) || (issued ? addDaysIso(issued, DEFAULT_TERM_DAYS) : null);
+    if (!due || due >= today) return;
+    // Past due stays past due when the amount is blank: list it as 金額待補 rather than dropping it.
+    var raw = String(v(r, '含稅總額') == null ? '' : v(r, '含稅總額')).replace(/,/g, '').trim(), n = Number(raw);
+    var gross = raw !== '' && isFinite(n) && n >= 0 ? n : null;
+    if (gross === 0) return;
     overdue.push({ number: String(v(r, '發票號碼') || ''), label: numbers[String(v(r, '案件ID') || '').trim()] || '', due: due, gross: gross });
   });
   followups.sort(function (a, b) { return a.date < b.date ? -1 : 1; });
   activities.sort(function (a, b) { return a.start < b.start ? -1 : 1; });
   overdue.sort(function (a, b) { return a.due < b.due ? -1 : 1; });
-  return { followups: followups, activities: activities, overdue: overdue, overdueTotal: overdue.reduce(function (t, o) { return t + o.gross; }, 0) };
+  return { followups: followups, activities: activities, overdue: overdue, overdueTotal: overdue.reduce(function (t, o) { return t + (o.gross || 0); }, 0), overdueUnknown: overdue.filter(function (o) { return o.gross === null; }).length };
+}
+
+/** IDs in the 文件 sheet, to confirm a case's signing document exists. */
+function documentIds_(ss) {
+  var values = ss.getSheetByName(DOC_SHEET).getDataRange().getValues(), col = columnIndex(values[0]), ids = new Set();
+  values.slice(1).forEach(function (r) { var id = String(r[col.id] || '').trim(); if (id) ids.add(id); });
+  return ids;
 }
 
 /** Plain-text mail body; null when there is nothing to report. */
@@ -379,8 +401,8 @@ function digestBody(digest, today) {
   digest.followups.forEach(function (f) { lines.push('・' + f.label + '（追案日 ' + f.date + '）' + (f.action ? '：' + f.action : '')); });
   lines.push('', '【未來 7 天活動】' + digest.activities.length + ' 場');
   digest.activities.forEach(function (a) { lines.push('・' + a.start + (a.end !== a.start ? ' ～ ' + a.end : '') + '　' + a.label); });
-  lines.push('', '【逾期應收】' + digest.overdue.length + ' 張，合計 NT$ ' + Math.round(digest.overdueTotal).toLocaleString('en-US'));
-  digest.overdue.slice(0, 20).forEach(function (o) { lines.push('・' + o.number + '　NT$ ' + Math.round(o.gross).toLocaleString('en-US') + '　到期 ' + o.due + (o.label ? '　' + o.label : '')); });
+  lines.push('', '【逾期應收】' + digest.overdue.length + ' 張，' + (digest.overdueUnknown ? '已知金額合計 NT$ ' + Math.round(digest.overdueTotal).toLocaleString('en-US') + '（另 ' + digest.overdueUnknown + ' 張金額待補）' : '合計 NT$ ' + Math.round(digest.overdueTotal).toLocaleString('en-US')));
+  digest.overdue.slice(0, 20).forEach(function (o) { lines.push('・' + o.number + '　' + (o.gross === null ? '金額待補' : 'NT$ ' + Math.round(o.gross).toLocaleString('en-US')) + '　到期 ' + o.due + (o.label ? '　' + o.label : '')); });
   if (digest.overdue.length > 20) lines.push('・⋯其餘 ' + (digest.overdue.length - 20) + ' 張請到儀表板查看');
   lines.push('', '儀表板：' + DASHBOARD_URL);
   return lines.join('\n');
@@ -579,7 +601,7 @@ function sendDailyDigest(e) {
   requireAdmin_(e);
   var ss = SpreadsheetApp.getActive();
   var today = Utilities.formatDate(new Date(), 'Asia/Taipei', 'yyyy-MM-dd');
-  var digest = buildDigest(ss.getSheetByName(CASE_SHEET).getDataRange().getValues(), ss.getSheetByName(INVOICE_SHEET).getDataRange().getValues(), today);
+  var digest = buildDigest(ss.getSheetByName(CASE_SHEET).getDataRange().getValues(), ss.getSheetByName(INVOICE_SHEET).getDataRange().getValues(), today, documentIds_(ss));
   var body = digestBody(digest, today);
   if (!body) return;
   var to = '';
@@ -612,7 +634,7 @@ function debugDigest() {
   requireAdmin_();
   var ss = SpreadsheetApp.getActive();
   var today = Utilities.formatDate(new Date(), 'Asia/Taipei', 'yyyy-MM-dd');
-  var digest = buildDigest(ss.getSheetByName(CASE_SHEET).getDataRange().getValues(), ss.getSheetByName(INVOICE_SHEET).getDataRange().getValues(), today);
+  var digest = buildDigest(ss.getSheetByName(CASE_SHEET).getDataRange().getValues(), ss.getSheetByName(INVOICE_SHEET).getDataRange().getValues(), today, documentIds_(ss));
   console.log('debugDigest ' + today + ': 該追 ' + digest.followups.length + '、活動 ' + digest.activities.length + '、逾期 ' + digest.overdue.length + ' 張，合計 ' + Math.round(digest.overdueTotal));
   console.log(digestBody(digest, today) || '（三項都沒有，今天不會寄信）');
 }

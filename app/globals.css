@@ -308,3 +308,18 @@ td small{font-size:var(--fs-meta);color:var(--text-3)}
 .nav-group{display:block;font-size:11px;letter-spacing:1.5px;color:#7f998a;padding:14px 14px 4px}
 .nav-group:first-child{padding-top:0}
 .sidebar nav .nav-item{padding-top:10px;padding-bottom:10px;margin:2px 0}
+/* Review pass 2: nothing readable below 12px; overview KPI cards are buttons that drive the trend chart. */
+.addition-label,.nav-group,.pie-center-label{font-size:var(--fs-meta)}
+.brand small{font-size:var(--fs-meta);letter-spacing:1.5px}
+button.metric-card{display:block;width:100%;text-align:left;font:inherit;color:inherit;cursor:pointer;transition:background .15s,border-color .15s}
+button.metric-card:hover{border-color:#cdd8c6}
+button.metric-card:focus-visible,tr.clickable:focus-visible{outline:2px solid var(--dark);outline-offset:2px}
+button.metric-card.active{background:var(--dark);border-color:var(--dark)}
+button.metric-card.active .metric-label,button.metric-card.active .metric-value,button.metric-card.active .metric-value small,button.metric-card.active .currency,button.metric-card.active .metric-note,button.metric-card.active .metric-bottom,button.metric-card.active .metric-bottom b,button.metric-card.active .unknown-value{color:#fff}
+button.metric-card.active .metric-bottom{border-color:rgba(255,255,255,.25)}
+button.metric-card.active .metric-stamp{color:rgba(255,255,255,.5)}
+/* The 760-unit chart shrinks to under half size on a phone; scale its labels up so they still read at ~12px. */
+@media(max-width:760px){.chart-axis{font-size:26px}}
+.chart-tabs button{white-space:nowrap}
+@media(max-width:760px){.chart-tabs{gap:14px;overflow-x:auto;scrollbar-width:none}}
+@media(max-width:760px){.chart-axis{font-size:30px}}
