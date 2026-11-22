@@ -123,16 +123,53 @@ test('the registered 版本紀錄 is what the script computes, before any draft 
  for(const q of cases)assert.equal(q.record,scriptRecord(rt,q.quoteId),q.quoteId);
 });
 
-test('a new case needs its 案件商機 row: without it a draft is made but signing back is refused',()=>{
+test('the menu refuses a quote whose case has no 案件商機 row; with the row the client can sign back',()=>{
  const rt=world();
  const q=register(rt,{n:1,version:'V1',caseId:'case_A799'});
  rt.ctx.createSignDrafts();
- assert.equal(rt.log.drafts.length,1,'the draft menu does not look at 案件商機');
+ assert.equal(rt.log.drafts.length,0,'no draft whose link could never be signed');
+ assert.equal(signRow(rt,q.signId)['簽署狀態'],'寄送失敗');
+ assert.match(signRow(rt,q.signId)['備註'],/案件商機.*case_A799/);
+ const ok=register(rt,{n:2,version:'V1'});
+ rt.ctx.createSignDrafts();
+ assert.equal(rt.log.drafts.length,1);
  const token=/[?&]t=([0-9a-f]{64})/.exec(rt.log.drafts[0].body)[1];
  rt.ctx.requestSignCode(token);
  const code=/(\d{6})/.exec(rt.log.sent.at(-1).body)[1];
- assert.throws(()=>rt.ctx.submitSignature(token,{name:'王小明',title:'經理',consent:true,image:signaturePng(),agent:'UA',code}),/暫時無法簽回/);
- const ev=rt.book['簽署事件'].data.at(-1);
- assert.equal(ev[2],'簽回失敗');assert.match(ev[6],/找不到案件 case_A799/);
- assert.notEqual(signRow(rt,q.signId)['簽署狀態'],'已簽回');
+ rt.ctx.submitSignature(token,{name:'王小明',title:'經理',consent:true,image:signaturePng(),agent:'UA',code});
+ assert.equal(signRow(rt,ok.signId)['簽署狀態'],'已簽回');
+});
+
+test('a quote moved to another group after registration is refused and keeps its registered record',()=>{
+ const rt=world();
+ const q=register(rt,{n:1,version:'V1'});
+ const d=rt.book['報價版本'].data;d[1][d[0].indexOf('報價組ID')]='g2';
+ rt.ctx.createSignDrafts();
+ assert.equal(rt.log.drafts.length,0);
+ const row=signRow(rt,q.signId);
+ assert.equal(row['簽署狀態'],'寄送失敗');
+ assert.equal(row['版本紀錄'],q.record,'the record is not rewritten to the new group');
+});
+
+test('the import recognises a registered PDF by its 文件ID even without a link, with a full-length Drive id',()=>{
+ const rt=world();
+ const id='1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789';
+ rt.book['文件'].appendRow(rowOf(docHeaders,{'文件ID':'doc_'+id.slice(0,16),'文件類型':'報價單','原始檔名':'A790 示範品牌活動-報價單.pdf','核對狀態':'已處理'}));
+ const docs=rt.book['文件'].data;
+ const plan=rt.ctx.planChanges(docs[0],docs.slice(1),[{id,name:'A790 示範品牌活動-報價單.pdf',url:'https://drive.google.com/file/d/'+id+'/view',folder:'2026報價單',kind:'報價單',sha256:'f'.repeat(64)}]);
+ assert.equal(plan.append.length,0);
+});
+
+test('a quote registered while the import reads the same PDF is not added a second time',()=>{
+ const rt=world();
+ rt.book['發票']=null;rt.ss.insertSheet('發票').appendRow(Object.values(schema.collections.invoices.columns));
+ const f=rt.newFile('A790 示範品牌活動-報價單.pdf',Buffer.from('%PDF-1.4 示範品牌'),rt.folder);
+ const docId='doc_'+f.id.slice(0,16);
+ rt.book['文件'].appendRow(rowOf(docHeaders,{'文件ID':docId,'文件類型':'報價單','原始檔名':f.name,'文件連結':f.getUrl(),'核對狀態':rt.ctx.AUTO_STATUS,'待核對事項':rt.ctx.AUTO_NOTE}));
+ rt.ctx.Drive={};
+ // The registrar appends its 報價版本 row while the import is busy with OCR.
+ rt.ctx.pdfText_=()=>{rt.book['報價版本'].appendRow(rowOf(quoteHeaders,{'報價ID':'quo_reg','案件ID':'case_A790','版本':'V1','報價組ID':'g1','來源文件ID':docId}));return '報價單 A790';};
+ rt.ctx.extractRecords_(rt.ss);
+ const rows=rt.book['報價版本'].data.slice(1).filter(r=>r[quoteHeaders.indexOf('來源文件ID')]===docId);
+ assert.equal(rows.length,1,'only the registered row references the PDF');
 });

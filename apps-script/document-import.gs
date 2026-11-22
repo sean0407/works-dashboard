@@ -557,6 +557,9 @@ function extractRecords_(ss) {
     } catch (e) { failed++; console.log('extractRecords: ' + name + ' 讀取失敗：' + e); }
   }
   var caseIds = caseIdsByNumber(caseSheet.getDataRange().getValues());
+  // Read again after the slow OCR: a quote registered meanwhile (by Claude or the 報價台) already references its PDF.
+  quoteValues = quoteSheet.getDataRange().getValues();
+  invoiceValues = invoiceSheet.getDataRange().getValues();
   var added = 0;
   [['報價單', quoteSheet, quoteValues], ['發票', invoiceSheet, invoiceValues]].forEach(function (spec) {
     var rows = planRecordRows(spec[0], spec[2][0], spec[2].slice(1), docs, caseIds).map(function (row, index) {

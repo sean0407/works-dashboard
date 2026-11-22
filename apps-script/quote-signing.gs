@@ -1039,6 +1039,8 @@ function createSignDrafts(e) {
         if (!quote) throw new Error('「報價版本」找不到報價 ' + row[col.quoteId]);
         if (quote.caseId !== String(row[col.caseId]).trim()) throw permanent_('報價 ' + row[col.quoteId] + ' 屬於案件 ' + quote.caseId + '，與簽署列不同');
         if (quote.sourceId && quote.sourceId !== String(row[col.sourceId]).trim()) throw permanent_('報價的來源文件ID 是 ' + quote.sourceId + '，與簽署列不同');
+        // Signing back needs the case row; without it the client could open the link but never sign.
+        if (!caseRowExists_(ss, quote.caseId)) throw permanent_('「案件商機」找不到案件 ' + quote.caseId);
         var token = newToken_();
         var due = addWorkingDays(today, SIGN_VALID_WORKDAYS);
         row[col.sha256] = pdfSha;
@@ -1046,7 +1048,11 @@ function createSignDrafts(e) {
         row[col.dueDate] = due;
         row[col.sentAt] = new Date();
         row[col.snapshot] = snapshotFor_(row, col, quote, pdfSha);
-        row[col.versionRecord] = versionRecordFor(quoteGroupKeys(quotes.headers, quotes.rows)[quote.id], versionNumber(quote.version));
+        // A record written at registration already counts (it closed lower versions then): keep it, so a quote moved to
+        // another group or version since is refused below instead of being issued under the new values.
+        if (!parseVersionRecord(row[col.versionRecord])) {
+          row[col.versionRecord] = versionRecordFor(quoteGroupKeys(quotes.headers, quotes.rows)[quote.id], versionNumber(quote.version));
+        }
         // A lower version must not get a link once a higher one has been issued: it could never be signed.
         var v = versionBlockReason(table.headers, table.rows, i, quotes.headers, quotes.rows);
         if (v.reason) throw permanent_(v.reason);
