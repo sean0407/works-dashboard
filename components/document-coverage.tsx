@@ -5,8 +5,8 @@ import {DataTable,type Column} from './data-table';
 import {documentCoverage} from '@/lib/domain/coverage';
 import {text} from '@/lib/domain/analytics';
 type Coverage=ReturnType<typeof documentCoverage>;
-export type CoverageFilter='all'|'missing'|'both'|'wonOnly'|'quoteOnly'|'review';
-const labels:Record<CoverageFilter,string>={all:'全部案件',missing:'缺報價資料',both:'成交與報價皆有',wonOnly:'成交未列本期報價',quoteOnly:'報價未列本期成交',review:'文件或配對待核對'};
+export type CoverageFilter='all'|'missing'|'both'|'wonOnly'|'quoteOnly'|'review'|'autoClosed';
+const labels:Record<CoverageFilter,string>={all:'全部案件',missing:'缺報價資料',both:'成交與報價皆有',wonOnly:'成交未列本期報價',quoteOnly:'報價未列本期成交',review:'文件或配對待核對',autoClosed:'依開票自動結案'};
 const safe=(value:unknown)=>{try{const url=new URL(text(value));return url.protocol==='https:'?url.href:null;}catch{return null;}};
 export function CoverageSummary({coverage,open}:{coverage:Coverage;open:(filter:CoverageFilter)=>void}){
  const s=coverage.summary;const missing=coverage.rows.filter(r=>r.cohort==='wonOnly'&&r.missingQuote).length;
@@ -14,7 +14,7 @@ export function CoverageSummary({coverage,open}:{coverage:Coverage;open:(filter:
 }
 export function DocumentCoveragePanel({coverage,filter,setFilter,select}:{coverage:Coverage;filter:CoverageFilter;setFilter:(filter:CoverageFilter)=>void;select:(id:string)=>void}){
  const [query,setQuery]=useState('');
- const match=(r:typeof coverage.rows[number],f:CoverageFilter)=>f==='all'||f==='missing'&&r.missingQuote||f==='review'&&r.needsReview||r.cohort===f;
+ const match=(r:typeof coverage.rows[number],f:CoverageFilter)=>f==='all'||f==='missing'&&r.missingQuote||f==='review'&&r.needsReview||f==='autoClosed'&&r.closure==='依開票結案'||r.cohort===f;
  const rows=coverage.rows.filter(r=>match(r,filter)&&`${r.number} ${r.title} ${r.clientName} ${r.reasons.join(' ')}`.toLowerCase().includes(query.toLowerCase()));
  type R=typeof rows[number];
  const columns:Column<R>[]=[
@@ -23,6 +23,7 @@ export function DocumentCoveragePanel({coverage,filter,setFilter,select}:{covera
   {key:'client',label:'付款公司',value:r=>r.clientName,filter:'select'},
   {key:'won',label:'本期成交',value:r=>r.wonInPeriod?'已成交':'未列入',filter:'select'},
   {key:'quoted',label:'本期最新報價',value:r=>r.quotedInPeriod?'有':'未列入',filter:'select'},
+  {key:'closure',label:'結案',value:r=>r.closure,filter:'select',render:r=>r.closure==='已結案'?<span className="badge green">已結案</span>:r.closure==='依開票結案'?<span className="cell-wrap"><span className="badge">依開票結案</span><small className="amber-text">{r.closureNote}</small></span>:<span className="muted">未結案</span>},
   {key:'quotes',label:'報價份數',kind:'num',value:r=>r.quoteCount,filter:'none'},
   {key:'invoices',label:'有效發票',kind:'num',value:r=>r.invoiceCount,filter:'none',render:r=><>{r.invoiceCount}{r.voidInvoiceCount>0&&<small className="muted">另 {r.voidInvoiceCount} 張作廢</small>}</>},
   {key:'reasons',label:'缺件與下一步',value:r=>r.reasons.join('；')||'文件已連結',filter:'text',render:r=>r.reasons.length?<span className="cell-wrap">{r.reasons.map(reason=><small className={reason==='尚無發票，不代表失單或欠款'||reason.includes('其他期間')?'muted':'amber-text'} key={reason}>{reason}</small>)}</span>:<span className="badge green">文件已連結</span>},

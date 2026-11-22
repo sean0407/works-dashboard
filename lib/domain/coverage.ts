@@ -42,9 +42,13 @@ export function documentCoverage(data:Dataset,a:Analysis,period:Period){
   if(quoted&&!won&&wonEver)reasons.push('已成交，成交認定日在其他期間');
   const informational=new Set(['尚無發票，不代表失單或欠款','報價在其他期間或未列最新報價KPI','已成交，成交認定日在其他期間']);
   const needsReview=reasons.some(s=>!informational.has(s));
-  return{id,number:text(c.number),title:text(c.title),clientId:text(c.clientId),clientName:clientName.get(text(c.clientId))||'客戶待核對',wonEver,wonInPeriod:won,quotedInPeriod:quoted,cohort:won&&quoted?'both':won?'wonOnly':quoted?'quoteOnly':'other',missingQuote,quoteCount:qs.length,invoiceCount:inv.length,voidInvoiceCount,candidateFiles,reasons,needsReview,files:[...new Set([...qs,...allInv].map(r=>text(r.sourceId)))].map(id=>source(id)).filter((d):d is NonNullable<typeof d>=>!!d)};
+  // 結案 normally follows the manual 結案狀態 column; a case that already has a valid invoice is listed as closed for now, flagged so it can be confirmed later.
+  const manualClosed=text(c.closureStatus)==='已結案'; // the original project's own column decides; invoices still count from every member
+  const closure:'已結案'|'依開票結案'|'未結案'=manualClosed?'已結案':inv.length?'依開票結案':'未結案';
+  const closureNote=closure==='依開票結案'?'已開票，先自動列為結案；結案狀態欄尚未填「已結案」':'';
+  return{id,number:text(c.number),title:text(c.title),clientId:text(c.clientId),clientName:clientName.get(text(c.clientId))||'客戶待核對',wonEver,wonInPeriod:won,quotedInPeriod:quoted,cohort:won&&quoted?'both':won?'wonOnly':quoted?'quoteOnly':'other',missingQuote,closure,closureNote,quoteCount:qs.length,invoiceCount:inv.length,voidInvoiceCount,candidateFiles,reasons,needsReview,files:[...new Set([...qs,...allInv].map(r=>text(r.sourceId)))].map(id=>source(id)).filter((d):d is NonNullable<typeof d>=>!!d)};
  });
  const unlinkedDocuments=docs.filter(d=>['報價單','發票'].includes(text(d.kind))&&!used.has(d.id)&&!['已處理','不適用'].includes(text(d.reviewStatus)));
  const matched=rows.filter(r=>r.wonInPeriod&&r.quotedInPeriod);
- return{rows,unlinkedDocuments,summary:{matchedWins:matched.length,matchedQuotes:quoteUnits.filter(q=>q.caseIds.some(id=>wonRoots.has(root(id)))).length,wonOnly:rows.filter(r=>r.cohort==='wonOnly').length,quoteOnly:quoteUnits.filter(q=>!q.caseIds.some(id=>wonRoots.has(root(id)))).length,missingQuote:rows.filter(r=>r.missingQuote).length,needsReview:rows.filter(r=>r.needsReview).length}};
+ return{rows,unlinkedDocuments,summary:{matchedWins:matched.length,matchedQuotes:quoteUnits.filter(q=>q.caseIds.some(id=>wonRoots.has(root(id)))).length,wonOnly:rows.filter(r=>r.cohort==='wonOnly').length,quoteOnly:quoteUnits.filter(q=>!q.caseIds.some(id=>wonRoots.has(root(id)))).length,missingQuote:rows.filter(r=>r.missingQuote).length,needsReview:rows.filter(r=>r.needsReview).length,autoClosed:rows.filter(r=>r.closure==='依開票結案').length}};
 }

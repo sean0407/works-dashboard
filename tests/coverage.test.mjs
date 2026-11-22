@@ -36,3 +36,21 @@ test('a same-number unlinked file is a candidate, not automatically accepted as 
 test('case/client filters do not reveal unrelated document coverage rows',()=>{
  const d={cases:[c('a'),c('b',{clientId:'other'})],invoices:[i('i','a'),i('j','b')],quotes:[],documents:[]};const a=run(d,{...filters,clientId:'u'});assert.deepEqual(a.rows.map(r=>r.id),['a']);
 });
+test('a case with a valid invoice is listed as closed automatically and flagged; the manual column still wins',()=>{
+ const a=run({cases:[c('auto'),c('manual',{closureStatus:'已結案'}),c('open'),c('void')],quotes:[q('q1','open')],invoices:[i('i1','auto'),i('i2','manual'),i('i3','void',{status:'作廢'})],documents:[]});
+ const by=id=>a.rows.find(r=>r.id===id);
+ assert.equal(by('auto').closure,'依開票結案');assert.match(by('auto').closureNote,/自動列為結案/);
+ assert.equal(by('manual').closure,'已結案');assert.equal(by('manual').closureNote,'');
+ assert.equal(by('open').closure,'未結案');
+ assert.equal(a.summary.autoClosed,1);
+ assert.equal(by('auto').needsReview,by('auto').reasons.some(r=>!['尚無發票，不代表失單或欠款','報價在其他期間或未列最新報價KPI','已成交，成交認定日在其他期間'].includes(r)));
+});
+test('an addition with an invoice closes its original project; voided invoices do not close it',()=>{
+ const a=run({cases:[c('a'),c('add',{parentId:'a'}),c('v')],quotes:[q('q','a'),q('qv','v')],invoices:[i('i','add'),i('iv','v',{status:'作廢'})],documents:[]});
+ assert.equal(a.rows.find(r=>r.id==='a').closure,'依開票結案');
+ const v=a.rows.find(r=>r.id==='v');assert.ok(v);assert.equal(v.closure,'未結案');assert.equal(v.invoiceCount,0);
+});
+test('only the original project\'s own 結案狀態 counts as a manual close; an addition marked closed does not hide the invoice note',()=>{
+ const a=run({cases:[c('a',{closureStatus:'未結案'}),c('add',{parentId:'a',closureStatus:'已結案'})],quotes:[q('q','a')],invoices:[i('i','a')],documents:[]});
+ assert.equal(a.rows[0].closure,'依開票結案');assert.ok(a.rows[0].closureNote);assert.equal(a.summary.autoClosed,1);
+});
